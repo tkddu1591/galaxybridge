@@ -21,6 +21,18 @@ helper_created=0
 
 installer::error() { printf 'GalaxyBridge: %s\n' "$*" >&2; exit 1; }
 
+installer::toolchain::check() {
+    local tool executable
+    local instruction='Install Apple Command Line Tools once: xcode-select --install (needed for installer verification, not runtime)'
+    # Query selection first: do not invoke tool shims that could open Apple's
+    # interactive installation prompt on a clean Mac.
+    /usr/bin/xcode-select -p >/dev/null 2>&1 || installer::error "$instruction"
+    for tool in lipo otool; do
+        executable=$(/usr/bin/xcrun --find "$tool" 2>/dev/null) || installer::error "$instruction"
+        [[ -f "$executable" && -x "$executable" ]] || installer::error "$instruction"
+    done
+}
+
 # All installed executable ancestors must be root-owned, non-writable by
 # non-root users, and free of ACL grants. Deny-only ACLs are harmless.
 installer::path::check() {
@@ -121,6 +133,7 @@ os_minor=${os_version#*.}; os_minor=${os_minor%%.*}
 bundle=$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 readonly bundle
 [[ -f "$bundle/SHA256SUMS" && ! -L "$bundle/SHA256SUMS" ]] || installer::error 'Run install.sh from the extracted release bundle (SHA256SUMS is required)'
+installer::toolchain::check
 
 if (( EUID != 0 )); then
     # Bash 3.2 treats an empty array as unset under nounset.

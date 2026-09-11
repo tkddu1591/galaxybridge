@@ -2,6 +2,7 @@
 """Non-privileged installer input checks. Never runs installation or sudo."""
 from pathlib import Path
 import subprocess
+import shlex
 import tempfile
 import unittest
 
@@ -76,6 +77,46 @@ class ReleaseLibraries(unittest.TestCase):
                 with self.subTest(script=script, dependency=dependency):
                     result = self.check_dependency(script, f'{owner}::binary::dependency::check', dependency)
                     self.assertNotEqual(result.returncode, 0)
+
+
+class InstallerToolchain(unittest.TestCase):
+    def check_toolchain(self, selection, discovery):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            selected = directory / 'xcode-select'
+            selected.write_text('#!/bin/sh\n' + selection + '\n')
+            selected.chmod(0o755)
+            discovered = directory / 'xcrun'
+            marker = directory / 'discovery-was-called'
+            discovered.write_text('#!/bin/sh\ntouch ' + shlex.quote(str(marker)) + '\n' + discovery + '\n')
+            discovered.chmod(0o755)
+            prefix = (REPOSITORY / 'install.sh').read_text().split('\nwhile (( $# )); do', 1)[0]
+            # Substitute only dependency executables in an in-memory test copy;
+            # the shipped installer always calls the fixed Apple tool paths.
+            prefix = prefix.replace('/usr/bin/xcode-select', shlex.quote(str(selected)))
+            prefix = prefix.replace('/usr/bin/xcrun', shlex.quote(str(discovered)))
+            result = subprocess.run(['/bin/bash', '-c', prefix + '\ninstaller::toolchain::check'],
+                                    capture_output=True, text=True, timeout=5, check=False)
+            return result, marker.exists()
+
+    def test_missing_selection_does_not_invoke_tool_discovery(self):
+        result, discovered = self.check_toolchain('exit 1', 'exit 1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(discovered)
+        self.assertIn('Install Apple Command Line Tools once: xcode-select --install', result.stderr)
+
+    def test_missing_tools_fail_with_actionable_message(self):
+        for discovery in ('exit 1', "printf '/does-not-exist/otool\\n'"):
+            with self.subTest(discovery=discovery):
+                result, discovered = self.check_toolchain('exit 0', discovery)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(discovered)
+                self.assertIn('xcode-select --install', result.stderr)
+
+    def test_existing_executables_are_accepted(self):
+        result, discovered = self.check_toolchain('exit 0', "printf '/bin/sh\\n'")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(discovered)
 
 
 @unittest.skipUnless(__import__('sys').platform == 'darwin', 'macOS filesystem metadata required')

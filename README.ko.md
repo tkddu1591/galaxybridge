@@ -6,6 +6,8 @@
 
 ## 1. 맥에서 안드로이드 USB 테더링
 
+설치 프로그램은 Apple의 `lipo`와 `otool`로 바이너리를 검증합니다. 이 도구가 없다면 **Apple Command Line Tools를 한 번 설치**해야 합니다: `xcode-select --install`. 설정된 전체 Xcode가 있어도 됩니다. 설치 과정의 검증에만 필요한 도구이며, 설치 후 GalaxyBridge 실행에는 Command Line Tools·Rust·Homebrew가 필요하지 않습니다.
+
 [릴리스](https://github.com/tkddu1591/galaxybridge/releases)의 arm64 압축 파일과 체크섬을 받아 검증하고, 압축을 푼 폴더에서 설치합니다.
 
 ```sh

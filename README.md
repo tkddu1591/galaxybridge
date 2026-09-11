@@ -22,6 +22,8 @@ When USB disconnects, the owned DHCP/DNS service and interfaces are removed befo
 
 ## Install once
 
+The installer uses Apple's `lipo` and `otool` to verify the release binary. Install **Apple Command Line Tools once** with `xcode-select --install` if they are missing; a configured full Xcode installation also supplies them. This prerequisite is for installer verification only. Running GalaxyBridge requires no Command Line Tools, Rust, or Homebrew.
+
 Download the arm64 archive and checksum from [Releases](https://github.com/tkddu1591/galaxybridge/releases). Verify the archive before extracting it, review the included installer, then run it from the extracted folder:
 
 ```sh
