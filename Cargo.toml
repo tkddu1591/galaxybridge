@@ -1,0 +1,23 @@
+[package]
+name = "galaxybridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Independent Android USB tethering for Apple Silicon Macs"
+license = "MIT"
+repository = "https://github.com/tkddu1591/galaxybridge"
+
+[dependencies]
+nusb = "=0.2.7"
+libc = "0.2"
+signal-hook = "=0.3.18"
+
+[build-dependencies]
+cc = "1.2"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

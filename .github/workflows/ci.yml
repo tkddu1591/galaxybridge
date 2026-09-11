@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.3'
+      RUSTUP_TOOLCHAIN: '1.89.0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.89.0 --profile minimal --component clippy,rustfmt --target aarch64-apple-darwin
+      - name: Format, lint, and test
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          bash -n install.sh uninstall.sh scripts/build-release.sh
+          python3 scripts/check-installer.py
+          python3 scripts/check-release.py
+      - name: Build offline release bundle
+        run: bash scripts/build-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: galaxybridge-macos-arm64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
