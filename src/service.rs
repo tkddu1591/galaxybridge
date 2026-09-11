@@ -2,20 +2,20 @@ use crate::{
     Result,
     ipc::{Backpressure, Channel, Message},
     macos::{
-        bpf::Device,
+        access::{Core, PrivateFile},
+        bpf::{Device, Frame},
+        identity::Account,
         interface::Pair,
         process::Worker,
         route::{Recovery, Snapshot},
+        worker_app::Bundle,
     },
     usb::devices::Filter,
 };
 use std::{
     fs::{File, OpenOptions},
     io::ErrorKind,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
+    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -25,6 +25,7 @@ use std::{
 
 pub struct Supervisor {
     filter: Filter,
+    account: Account,
     stop: Arc<AtomicBool>,
     _lock: File,
 }
@@ -74,35 +75,36 @@ impl Supervisor {
         if unsafe { libc::geteuid() } != 0 {
             return Err("network setup requires root; use sudo galaxybridge connect".into());
         }
+        Core::disable()?;
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
             .open("/var/run/io.galaxybridge.lock")?;
-        if lock.metadata()?.uid() != 0 || lock.metadata()?.nlink() != 1 {
-            return Err("unsafe lock file".into());
-        }
+        PrivateFile::check(&lock, 0)?;
         // SAFETY: flock acts only on this owned descriptor; no pointer arguments.
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err("another GalaxyBridge supervisor is running".into());
         }
+        Bundle::check()?;
         Ok(Self {
             filter,
+            account: Account::load()?,
             stop,
             _lock: lock,
         })
     }
 
     pub fn run(&self, repeat: bool) -> Result<()> {
-        eprintln!("GalaxyBridge: waiting for one matching Samsung RNDIS device");
+        eprintln!("GalaxyBridge: waiting for one matching RNDIS device");
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            match Worker::probe(&self.filter) {
+            match Worker::probe(&self.filter, &self.account) {
                 Ok(true) => {
                     let result = self.connect();
                     if !repeat {
@@ -137,7 +139,7 @@ impl Supervisor {
         let bpf = Device::open(&pair.transport)?;
         let (socket, child_socket) = Channel::create()?;
         socket.set_nonblocking(true)?;
-        let worker = Worker::spawn(&self.filter, &child_socket)?;
+        let worker = Worker::spawn(&self.filter, &child_socket, &self.account)?;
         drop(child_socket);
         let mut bpf_buffer = vec![0u8; bpf.buffer_size];
         let mut connection = Connection {
@@ -161,7 +163,7 @@ impl Supervisor {
                 .bpf
                 .as_mut()
                 .ok_or("network transport is closed")?;
-            if let Some(status) = worker.child.try_wait()? {
+            if let Some(status) = worker.poll()? {
                 return Err(format!("USB worker exited ({status})").into());
             }
             if !ready && started.elapsed() > Duration::from_secs(10) {
@@ -210,11 +212,16 @@ impl Supervisor {
                                 connection.pair.system
                             );
                         }
-                        Message::Frame(frame) if ready => match bpf.write(frame) {
-                            Ok(()) => received_frames += 1,
-                            Err(e) if Backpressure::contains(&e) => {}
-                            Err(e) => return Err(e.into()),
-                        },
+                        Message::Frame(frame) if ready => {
+                            if !Frame::permits(frame) {
+                                continue;
+                            }
+                            match bpf.write(frame) {
+                                Ok(()) => received_frames += 1,
+                                Err(e) if Backpressure::contains(&e) => {}
+                                Err(e) => return Err(e.into()),
+                            }
+                        }
                         _ => return Err("unexpected worker protocol state".into()),
                     }
                 }
@@ -223,6 +230,9 @@ impl Supervisor {
                 match bpf.read(&mut bpf_buffer) {
                     Ok(n) if ready => {
                         for frame in bpf.frames(&bpf_buffer[..n])? {
+                            if !Frame::permits(frame) {
+                                continue;
+                            }
                             sent_frames += 1;
                             match socket.send(&Message::Frame(frame).encode()) {
                                 Ok(_) => (),

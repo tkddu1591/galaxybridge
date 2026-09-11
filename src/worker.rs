@@ -87,9 +87,18 @@ pub fn run(socket: UnixDatagram, filter: Filter, stop: Arc<AtomicBool>) -> Resul
                     let mut buffer = Buffer::new(encoded.len());
                     buffer.extend_from_slice(&encoded);
                     // One bounded transfer at a time avoids unbounded TX queues.
-                    outgoing
-                        .transfer_blocking(buffer, Duration::from_millis(500))
-                        .into_result()?;
+                    let expected = encoded.len();
+                    outgoing.submit(buffer);
+                    // nusb::transfer_blocking waits without a deadline for a
+                    // cancellation completion. Do not let a broken device keep
+                    // the worker alive forever on that cancellation path.
+                    let completion = outgoing
+                        .wait_next_complete(Duration::from_millis(500))
+                        .ok_or("USB transmit timed out")?;
+                    completion.status?;
+                    if completion.actual_len != expected {
+                        return Err("short USB transmit completion".into());
+                    }
                 }
                 Ok(())
             })();

@@ -1,6 +1,6 @@
 # GalaxyBridge
 
-**Your Galaxy. Your Mac. One USB cable.**
+**Your Android. Your Mac. One USB cable.**
 
 An independent Android USB tethering driver for Apple Silicon, with optional automatic reconnect. Written in Rust. No TetherKit, HoRNDIS, libusb, kernel extension, or browser proxy.
 
@@ -11,8 +11,8 @@ An independent Android USB tethering driver for Apple Silicon, with optional aut
 ## What it does
 
 - Uses the phone's RNDIS USB network interface as an Ethernet connection on macOS.
-- Discovers Samsung devices by vendor **and RNDIS interface descriptors**, rather than one Galaxy model's product ID.
-- Keeps USB protocol parsing in an unprivileged `nobody` worker. A separate root supervisor owns network setup and BPF.
+- Discovers RNDIS devices by their USB interface descriptors, regardless of manufacturer. Optional vendor, product and serial filters narrow selection; they are not authentication.
+- Keeps USB protocol parsing in a separately signed App Sandbox worker under a dedicated, disabled `_galaxybridge` service account. A separate root supervisor owns network setup and BPF.
 - Supports manual sessions or an optional `launchd` service that waits for the phone and reconnects after USB loss.
 - Changes the preferred **IPv4** route after DHCP succeeds, unless IPv4 `utun` routes are present. It does not promise VPN, IPv6, or DNS leak prevention.
 
@@ -55,14 +55,14 @@ To select a particular device:
 galaxybridge devices --show-serial
 ./install.sh --auto --serial YOUR_PHONE_SERIAL
 # Or, less specifically:
-./install.sh --auto --product 6863
+./install.sh --auto --vendor 04e8 --product 6863
 ```
 
 The examples are alternatives, not sequential installs. Do not run another RNDIS driver alongside GalaxyBridge.
 
 ## Optional: enable tethering just by plugging in
 
-On Galaxy devices that expose the setting, select **Settings → Developer options → Default USB configuration → USB tethering** once. USB debugging is unnecessary. Mobile data must be available; some devices require unlocking before USB data access.
+On Android devices that expose the setting, select **Settings → Developer options → Default USB configuration → USB tethering** once. USB debugging is unnecessary. Mobile data must be available; some devices require unlocking before USB data access.
 
 The phone setting and the Mac's `--auto` service are independent. Without the phone setting, turn USB tethering on manually after connecting. Without `--auto`, start `galaxybridge connect` manually. One UI version, carrier policy, USB restrictions, and device firmware can change whether the phone setting exists or takes effect.
 
@@ -90,7 +90,7 @@ The installer keeps the binary in a root-owned location, validates checksums and
 
 ## Security, plainly
 
-This is **not certified or independently audited security software**. Rust bounds checks and process separation reduce some risks; they do not make an untrusted USB device safe. The phone supplies Ethernet/DHCP traffic to macOS and can become the internet gateway. `nobody` is a restricted Unix identity, not a macOS sandbox. The supervisor still runs as root.
+This is **not certified or independently audited security software**. Rust bounds checks and process separation reduce some risks; they do not make an untrusted USB device safe. The phone supplies Ethernet/DHCP traffic to macOS and can become the internet gateway. The worker uses App Sandbox and a dedicated service account. Its allowed USB and IPC channels remain powerful network capabilities; the sandbox does not make arbitrary USB devices trustworthy. The supervisor still runs as root.
 
 No SIP changes, Reduced Security mode, USB debugging, packet-content logging, telemetry service, or automatic code downloads are required. Archive hashes and ad-hoc signatures check integrity, **not publisher identity**. See [SECURITY.md](SECURITY.md) for the full trust boundary and reporting process.
 
@@ -100,13 +100,14 @@ No SIP changes, Reduced Security mode, USB debugging, packet-content logging, te
 | --- | --- |
 | Apple Silicon | Native arm64 build; targets M-series Macs |
 | macOS deployment target | 13.3, checked in the Mach-O output |
-| Phone protocol | Samsung RNDIS descriptors; NCM/ECM are outside this implementation |
+| Phone protocol | Manufacturer-neutral RNDIS selection with strict configuration and endpoint validation |
+| NCM/ECM | Separate USB networking protocols; GalaxyBridge does not claim these interfaces. Check macOS Network settings for a native USB network service |
 | Physical test device | M3 Pro / macOS 26.5.1 / Galaxy S25 Ultra |
-| USB/RNDIS initialization | Passed without root USB parsing |
-| End-to-end independent-driver internet | DHCP, preferred IPv4 route, HTTPS and Google HTTP 204 passed on the physical test device |
-| Automatic Mac-side connection | The installed launchd service detected the tethering device and connected without a Mac command |
-| USB unplug with Wi-Fi left enabled | Wi-Fi default returned about 0.79 s after USB absence; a fresh HTTPS request succeeded at 1.09 s; no Wi-Fi toggle was used in this check |
-| Other M-series / Galaxy combinations | Not physically verified; please report exact model/OS/protocol |
+| USB/RNDIS initialization | v0.1.0 baseline passed; v0.2.0 sandboxed hardware validation pending |
+| End-to-end independent-driver internet | v0.1.0 baseline: DHCP, preferred IPv4 route and HTTPS passed; new sandboxed candidate requires a separate physical check |
+| Automatic Mac-side connection | v0.1.0 baseline passed; dedicated-account/App Sandbox launch validation pending |
+| USB unplug with Wi-Fi left enabled | v0.1.0 baseline: about 0.79 s to the Wi-Fi route and 1.09 s to fresh HTTPS without toggling Wi-Fi; v0.2.0 requires retesting |
+| Other M-series / Android combinations | Not physically verified; please report exact model/OS/protocol |
 | Reboot, sleep/wake, Wi-Fi disabled | Separate validation required |
 
 The private macOS `feth` interface is an explicit compatibility risk. If relevant kernel settings differ from the expected defaults, GalaxyBridge refuses to silently change global settings.
@@ -129,4 +130,4 @@ python3 scripts/check-installer.py
 
 The protocol implementation is original code based on [Microsoft's RNDIS specifications](https://learn.microsoft.com/en-us/windows-hardware/drivers/network/remote-ndis-messaging). macOS integration uses Apple's system tools and BPF headers; [Apple's `feth` implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if_fake.c) documents the private interface behavior. USB transport is provided by [nusb](https://github.com/kevinmehall/nusb).
 
-MIT licensed. No affiliation with Samsung or Apple.
+MIT licensed. No affiliation with Android device manufacturers or Apple.

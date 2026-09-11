@@ -22,6 +22,8 @@ class ReleaseOutput(unittest.TestCase):
             source = root / 'source'
             (source / 'scripts').mkdir(parents=True)
             shutil.copyfile(REPOSITORY / 'scripts/build-release.sh', source / 'scripts/build-release.sh')
+            shutil.copyfile(REPOSITORY / 'scripts/identity.sh', source / 'scripts/identity.sh')
+            shutil.copyfile(REPOSITORY / 'scripts/worker-entitlements.plist', source / 'scripts/worker-entitlements.plist')
             for name in ('README.md', 'README.ko.md', 'LICENSE', 'SECURITY.md', 'install.sh', 'uninstall.sh'):
                 (source / name).write_text('Packaging test fixture\n')
             (source / 'docs').mkdir()
@@ -30,6 +32,7 @@ class ReleaseOutput(unittest.TestCase):
             stale = source / 'target/aarch64-apple-darwin/release/galaxybridge'
             stale.parent.mkdir(parents=True)
             stale.write_bytes(b'STALE ARTIFACT: not the binary just built')
+            stale.with_name('galaxybridge-usb').write_bytes(b'STALE WORKER: not the binary just built')
             c_source = root / 'fixture.c'
             c_source.write_text('int main(void) { return 0; }\n')
             binary = root / 'fresh-binary'
@@ -44,9 +47,10 @@ root = pathlib.Path(os.environ['GALAXYBRIDGE_TEST_ROOT'])
 if sys.argv[1] == 'build':
     arguments = sys.argv[2:]
     output = pathlib.Path(arguments[arguments.index('--target-dir') + 1]) if '--target-dir' in arguments else pathlib.Path(os.environ['CARGO_TARGET_DIR'])
-    destination = output / 'aarch64-apple-darwin/release/galaxybridge'
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(os.environ['GALAXYBRIDGE_TEST_BINARY'], destination)
+    for binary_name in ('galaxybridge', 'galaxybridge-usb'):
+        destination = output / 'aarch64-apple-darwin/release' / binary_name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(os.environ['GALAXYBRIDGE_TEST_BINARY'], destination)
     (root / 'observed-output.json').write_text(json.dumps(str(output)))
 elif sys.argv[1] == 'metadata':
     print(json.dumps({'resolve': {'root': 'fixture', 'nodes': [{'id': 'fixture'}]}, 'packages': [{'id': 'fixture', 'name': 'galaxybridge', 'version': '0.0.0-test'}]}))
@@ -69,12 +73,18 @@ else:
             self.assertEqual(json.loads((root / 'observed-output.json').read_text()), str(source / '.build/cargo'))
             archive = source / 'dist/galaxybridge-0.0.0-test-macos-arm64.tar.gz'
             with tarfile.open(archive) as bundle:
+                for member in bundle.getmembers():
+                    self.assertEqual((member.uid, member.gid, member.uname, member.gname), (0, 0, 'root', 'wheel'))
+                    self.assertFalse(any(key.startswith(('LIBARCHIVE.', 'SCHILY.')) for key in member.pax_headers))
                 packaged = bundle.extractfile('galaxybridge-0.0.0-test-macos-arm64/bin/galaxybridge').read()
                 self.assertEqual(hashlib.sha256(packaged).digest(), hashlib.sha256(binary.read_bytes()).digest())
                 manifest = bundle.extractfile('galaxybridge-0.0.0-test-macos-arm64/SHA256SUMS').read().decode()
                 self.assertIn(f'{hashlib.sha256(packaged).hexdigest()}  bin/galaxybridge', manifest)
                 self.assertIn('  README.ko.md\n', manifest)
                 self.assertIn('  docs/architecture.md\n', manifest)
+                self.assertIn('  libexec/identity.sh\n', manifest)
+                self.assertIn('  libexec/USBWorker.app/Contents/MacOS/galaxybridge-usb\n', manifest)
+                self.assertIn('  libexec/USBWorker.app/Contents/_CodeSignature/CodeResources\n', manifest)
             # Existing release artifacts must not be silently replaced.
             rerun = subprocess.run(['/bin/bash', str(source / 'scripts/build-release.sh')],
                                    env=environment, capture_output=True, text=True, timeout=30)

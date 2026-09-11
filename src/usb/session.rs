@@ -1,4 +1,4 @@
-use super::devices::{self, Filter};
+use super::{devices::Filter, layout::Layout};
 use crate::{
     Result,
     rndis::{
@@ -8,7 +8,6 @@ use crate::{
 };
 use nusb::{
     Device, Endpoint, Interface, MaybeFuture,
-    descriptors::TransferType,
     transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, In, Interrupt, Out, Recipient},
 };
 use std::time::{Duration, Instant};
@@ -29,73 +28,20 @@ impl Session {
     pub fn open(filter: &Filter) -> Result<Self> {
         let device = filter.select()?.open().wait()?;
         let config = device.active_configuration()?;
-        let controls: Vec<_> = config
-            .interface_alt_settings()
-            .filter(|i| devices::signature(i.class(), i.subclass(), i.protocol()))
-            .collect();
-        if controls.len() != 1 {
-            return Err("ambiguous RNDIS control interface".into());
-        }
-        let ctl = &controls[0];
-        let data_number = ctl
-            .descriptors()
-            .find_map(|d| {
-                if d.len() == 5 && d[1] == 0x24 && d[2] == 6 && d[3] == ctl.interface_number() {
-                    Some(d[4])
-                } else {
-                    None
-                }
-            })
-            .or_else(|| ctl.interface_number().checked_add(1))
-            .ok_or("missing data interface")?;
-        let data: Vec<_> = config
-            .interface_alt_settings()
-            .filter(|i| i.interface_number() == data_number && i.class() == 0x0a)
-            .filter(|i| {
-                i.endpoints()
-                    .filter(|e| e.transfer_type() == TransferType::Bulk)
-                    .count()
-                    == 2
-            })
-            .collect();
-        if data.len() != 1 {
-            return Err("missing or ambiguous RNDIS data alternate setting".into());
-        }
-        let data_desc = &data[0];
-        let incoming = data_desc
-            .endpoints()
-            .find(|e| e.transfer_type() == TransferType::Bulk && e.address() & 0x80 != 0)
-            .ok_or("missing bulk IN")?
-            .address();
-        let outgoing = data_desc
-            .endpoints()
-            .find(|e| e.transfer_type() == TransferType::Bulk && e.address() & 0x80 == 0)
-            .ok_or("missing bulk OUT")?
-            .address();
-        let notification = ctl
-            .endpoints()
-            .find(|e| e.transfer_type() == TransferType::Interrupt && e.address() & 0x80 != 0)
-            .ok_or("missing RNDIS notification endpoint")?
-            .address();
+        let layout = Layout::parse(config.as_bytes())?;
         let control = device
-            .claim_interface(ctl.interface_number())
+            .claim_interface(layout.control.number)
             .wait()
-            .map_err(|e| format!("claim control interface {}: {e}", ctl.interface_number()))?;
-        if ctl.alternate_setting() != 0 {
-            control.set_alt_setting(ctl.alternate_setting()).wait()?;
-        }
+            .map_err(|e| format!("claim control interface {}: {e}", layout.control.number))?;
+        control.set_alt_setting(layout.control.alternate).wait()?;
         let data_intf = device
-            .claim_interface(data_number)
+            .claim_interface(layout.data.number)
             .wait()
-            .map_err(|e| format!("claim data interface {data_number}: {e}"))?;
-        if data_desc.alternate_setting() != 0 {
-            data_intf
-                .set_alt_setting(data_desc.alternate_setting())
-                .wait()?;
-        }
-        let rx = data_intf.endpoint::<Bulk, In>(incoming)?;
-        let tx = data_intf.endpoint::<Bulk, Out>(outgoing)?;
-        let mut notifications = control.endpoint::<Interrupt, In>(notification)?;
+            .map_err(|e| format!("claim data interface {}: {e}", layout.data.number))?;
+        data_intf.set_alt_setting(layout.data.alternate).wait()?;
+        let rx = data_intf.endpoint::<Bulk, In>(layout.incoming)?;
+        let tx = data_intf.endpoint::<Bulk, Out>(layout.outgoing)?;
+        let mut notifications = control.endpoint::<Interrupt, In>(layout.notification)?;
         notifications.submit(Buffer::new(notifications.max_packet_size()));
         let mut session = Self {
             _device: device,
@@ -148,6 +94,7 @@ impl Session {
     fn exchange(&mut self, request: Request) -> Result<Vec<u8>> {
         self.send(&request)?;
         let deadline = Instant::now() + Duration::from_secs(2);
+        let mut responses = 0;
         while Instant::now() < deadline {
             let Some(completion) = self
                 .notifications
@@ -156,11 +103,10 @@ impl Session {
                 continue;
             };
             let mut notification = completion.into_result()?;
-            if notification.len() != 8
-                || wire::u32_at(&notification, 0)? != 1
-                || wire::u32_at(&notification, 4)? != 0
-            {
-                return Err("invalid RESPONSE_AVAILABLE notification".into());
+            control::Notification::validate(&notification)?;
+            responses += 1;
+            if responses > 32 {
+                return Err("too many RNDIS control indications without a completion".into());
             }
             notification.clear();
             self.notifications.submit(notification);
@@ -178,12 +124,15 @@ impl Session {
                     Duration::from_millis(500),
                 )
                 .wait()?;
-            if bytes.len() < 8 {
+            if bytes == [0] {
                 std::thread::sleep(Duration::from_millis(10));
                 continue;
             }
             // Media status indications can precede the command completion.
             if wire::u32_at(&bytes, 0)? == 7 {
+                if control::Indication::parse(&bytes)? == control::Indication::MediaDisconnect {
+                    return Err("RNDIS media disconnected".into());
+                }
                 continue;
             }
             return Ok(request.response(&bytes)?.to_vec());

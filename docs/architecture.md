@@ -5,16 +5,16 @@ flowchart LR
     Apps[Mac applications] <--> Stack[macOS network stack]
     Stack <--> Feth[Owned feth pair]
     Feth <--> Root[Root supervisor / BPF]
-    Root <-->|Bounded Unix datagrams| Worker[nobody USB worker]
-    Worker <-->|nusb / IOKit| Phone[Samsung RNDIS phone]
+    Root <-->|Bounded Unix datagrams| Worker[App Sandbox USB worker]
+    Worker <-->|nusb / IOKit| Phone[RNDIS device]
     Phone <--> Internet[Phone internet connection]
 ```
 
-The supervisor launches device discovery under `nobody`. It creates interfaces only when one eligible device is present. Interface names come from `ifconfig feth create`, are validated, and are never copied from USB strings.
+The supervisor launches the separate, signed `USBWorker.app` under the dedicated `_galaxybridge` identity. It validates the app signature, fixed root-owned path and exact sandbox/USB entitlement policy. Public device inspection also goes through the signed app. The USB program refuses root and unsigned development invocations before USB enumeration. It creates interfaces only when one eligible device is present. Interface names come from `ifconfig feth create`, are validated, and are never copied from USB strings.
 
 The USB worker claims a control interface and its CDC data companion, reads the RNDIS notification endpoint, initializes the device, queries its MAC and sets the packet filter. It validates USB message framing in safe Rust and forwards only Ethernet frames through an unnamed socketpair. The initial MAC handshake has a fixed format and is validated by the supervisor.
 
-The supervisor applies the MAC, starts DHCP and bridges BPF frames. The BPF descriptor is held only by the supervisor. The small native C file binds to system BPF headers and performs the async-signal-safe descriptor/credential setup before the USB worker execs. It does not parse USB data.
+The supervisor applies the MAC, starts DHCP and bridges only IPv4/ARP BPF frames. Other Ethernet types, including direct IPv6 router advertisements, are dropped at the root boundary. The BPF descriptor is held only by the supervisor. The small native C file binds to system BPF headers and performs the async-signal-safe descriptor/credential setup before the USB worker execs. It does not parse USB data.
 
 ## Ownership
 
@@ -22,14 +22,19 @@ The supervisor applies the MAC, starts DHCP and bridges BPF frames. The BPF desc
 | --- | --- |
 | `rndis::control` | Request encoding, completion validation and negotiated limits |
 | `rndis::packet` | Bounded Ethernet packet framing and parsing |
-| `usb::devices` | Samsung/RNDIS eligibility and exact-one selection |
+| `usb::devices` | Manufacturer-neutral RNDIS eligibility and exact-one selection |
+| `usb::layout` | Whole-configuration validation and unambiguous control/data/endpoint selection |
+| `usb::confinement` | Require the executing helper's sandbox and USB signing entitlements |
 | `usb::session` | USB interface claims and protocol control exchanges |
 | `worker` | Bounded USB RX/TX and keepalive lifecycle |
 | `ipc` | Root/worker message schema |
 | `macos::interface` | Owned interface creation, MAC, DHCP and cleanup |
 | `macos::bpf` | BPF descriptor and capture record parsing |
 | `macos::route` | Fail-closed route inspection, preference and restoration |
-| `macos::process` | Credential dropping and bounded worker lifetime |
+| `macos::process` | Fixed helper launch, irreversible credential dropping and bounded worker lifetime |
+| `macos::identity` | Private receipt, disabled account/group and directory lookup agreement |
+| `macos::access` | Root-owned path/state-file validation and inherited descriptor policy |
+| `macos::worker_app` | Signature, bundle identity and exact entitlement allowlist |
 | `service` | Session orchestration and optional reconnect loop |
 
 ## Failure behavior

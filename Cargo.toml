@@ -1,6 +1,7 @@
 [package]
 name = "galaxybridge"
-version = "0.1.0"
+default-run = "galaxybridge"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Independent Android USB tethering for Apple Silicon Macs"

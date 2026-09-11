@@ -26,9 +26,10 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-          bash -n install.sh uninstall.sh scripts/build-release.sh
+          bash -n install.sh uninstall.sh scripts/build-release.sh scripts/identity.sh
           python3 scripts/check-installer.py
           python3 scripts/check-release.py
+          python3 scripts/check-identity.py
       - name: Build offline release bundle
         run: bash scripts/build-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

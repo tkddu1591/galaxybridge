@@ -44,10 +44,34 @@ impl Device {
         self.file.read(buffer)
     }
     pub fn write(&mut self, frame: &[u8]) -> std::io::Result<()> {
-        self.file.write_all(frame)
+        if !Frame::permits(frame) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported Ethernet frame",
+            ));
+        }
+        // A BPF write is a packet operation. Retrying a short write with the
+        // remaining bytes would inject them as an unrelated Ethernet packet.
+        if self.file.write(frame)? != frame.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "short BPF packet write",
+            ));
+        }
+        Ok(())
     }
     pub fn frames<'a>(&self, bytes: &'a [u8]) -> Result<Vec<&'a [u8]>> {
         Batch::decode(bytes, self.layout)
+    }
+}
+
+/// The bridge deliberately supports IPv4 and ARP only. In particular, it must
+/// not inject unsolicited IPv6 router advertisements or nested VLAN frames.
+pub struct Frame;
+impl Frame {
+    pub fn permits(bytes: &[u8]) -> bool {
+        (14..=FRAME_LIMIT).contains(&bytes.len())
+            && matches!(bytes.get(12..14), Some([0x08, 0x00] | [0x08, 0x06]))
     }
 }
 

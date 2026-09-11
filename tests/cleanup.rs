@@ -66,7 +66,7 @@ fn worker_cleanup_reaps_its_child_before_returning() {
     let child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
     let pid = child.id() as libc::pid_t;
     let started = Instant::now();
-    drop(Worker { child });
+    drop(Worker::adopt(child).unwrap());
     assert!(started.elapsed() < Duration::from_secs(5));
     // ECHILD establishes that Worker reaped the process, rather than merely
     // sending a signal and leaving a zombie for the long-running supervisor.
@@ -92,7 +92,7 @@ fn worker_cleanup_escalates_and_reaps_a_child_that_ignores_termination() {
     assert_eq!(ready, "ready\n");
     let pid = child.id() as libc::pid_t;
     let started = Instant::now();
-    drop(Worker { child });
+    drop(Worker::adopt(child).unwrap());
     assert!(started.elapsed() < Duration::from_secs(5));
     let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
     assert_eq!(result, -1);

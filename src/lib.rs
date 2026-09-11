@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod ipc;
 #[cfg(target_os = "macos")]
 pub mod macos;

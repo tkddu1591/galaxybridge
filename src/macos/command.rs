@@ -12,9 +12,33 @@ struct Process(Child);
 
 impl Drop for Process {
     fn drop(&mut self) {
-        // Child caches a reaped exit status; kill never targets a reused PID.
+        match self.0.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => (),
+            Err(error) => {
+                eprintln!("GalaxyBridge: command cleanup: {error}");
+                return;
+            }
+        }
+        // The child is still owned and unreaped. Do not turn a bounded command
+        // timeout into an unlimited wait if the operating system cannot reap it.
         let _ = self.0.kill();
-        let _ = self.0.wait();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match self.0.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => (),
+                Err(error) => {
+                    eprintln!("GalaxyBridge: command cleanup: {error}");
+                    return;
+                }
+            }
+            if Instant::now() >= deadline {
+                eprintln!("GalaxyBridge: command did not exit within its cleanup deadline");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -82,44 +106,55 @@ impl<T: Read + AsRawFd> Capture<T> {
 }
 
 pub fn run(path: &str, args: &[&str]) -> Result<Output> {
-    let mut child = Process(
-        Command::new(path)
-            .args(args)
-            .env_clear()
-            .env("LC_ALL", "C")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?,
-    );
-    let mut stdout = Capture::new(child.0.stdout.take().ok_or("missing command stdout")?)?;
-    let mut stderr = Capture::new(child.0.stderr.take().ok_or("missing command stderr")?)?;
-    let mut remaining = OUTPUT_LIMIT;
-    let deadline = Instant::now() + Duration::from_secs(8);
-    loop {
-        if Instant::now() >= deadline {
-            return Err(format!("{path} timed out").into());
-        }
-        stdout.drain(&mut remaining)?;
-        stderr.drain(&mut remaining)?;
-        if let Some(status) = child.0.try_wait()? {
-            // Descendants can still hold inherited pipes after the immediate
-            // child exits. Keep draining, subject to the same bounded deadline.
-            if stdout.closed && stderr.closed {
-                return Ok(Output {
-                    status,
-                    stdout: std::mem::take(&mut stdout.bytes),
-                    stderr: std::mem::take(&mut stderr.bytes),
-                });
+    let mut command = Command::new(path);
+    command
+        .args(args)
+        .env_clear()
+        .env("LC_ALL", "C")
+        .current_dir("/");
+    Runner::capture(command, Duration::from_secs(8))
+}
+
+pub struct Runner;
+impl Runner {
+    pub fn capture(mut command: Command, timeout: Duration) -> Result<Output> {
+        let name = command.get_program().to_string_lossy().into_owned();
+        let mut child = Process(
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?,
+        );
+        let mut stdout = Capture::new(child.0.stdout.take().ok_or("missing command stdout")?)?;
+        let mut stderr = Capture::new(child.0.stderr.take().ok_or("missing command stderr")?)?;
+        let mut remaining = OUTPUT_LIMIT;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(format!("{name} timed out").into());
             }
-        }
-        let mut descriptors = [stdout.descriptor(), stderr.descriptor()];
-        // SAFETY: descriptors is a live two-element pollfd array. Closed pipes
-        // use -1, which poll explicitly ignores.
-        if unsafe { libc::poll(descriptors.as_mut_ptr(), 2, 20) } < 0 {
-            let error = Error::last_os_error();
-            if error.kind() != ErrorKind::Interrupted {
-                return Err(error.into());
+            stdout.drain(&mut remaining)?;
+            stderr.drain(&mut remaining)?;
+            if let Some(status) = child.0.try_wait()? {
+                // Descendants can still hold inherited pipes after the immediate
+                // child exits. Keep draining, subject to the same bounded deadline.
+                if stdout.closed && stderr.closed {
+                    return Ok(Output {
+                        status,
+                        stdout: std::mem::take(&mut stdout.bytes),
+                        stderr: std::mem::take(&mut stderr.bytes),
+                    });
+                }
+            }
+            let mut descriptors = [stdout.descriptor(), stderr.descriptor()];
+            // SAFETY: descriptors is a live two-element pollfd array. Closed pipes
+            // use -1, which poll explicitly ignores.
+            if unsafe { libc::poll(descriptors.as_mut_ptr(), 2, 20) } < 0 {
+                let error = Error::last_os_error();
+                if error.kind() != ErrorKind::Interrupted {
+                    return Err(error.into());
+                }
             }
         }
     }

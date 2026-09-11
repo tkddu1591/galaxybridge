@@ -27,11 +27,13 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<&[u8]>> {
     let mut rest = bytes;
     let mut frames = Vec::new();
     while !rest.is_empty() {
-        // USB transports may append a small, all-zero terminator/padding.
+        // USB transports may append all-zero terminator/padding up to the
+        // transfer bound. Padding is not a second RNDIS message.
         if rest.iter().all(|b| *b == 0) {
             break;
         }
-        if rest.len() < HEADER || wire::u32_at(rest, 0)? != 1 {
+        if (bytes.len() - rest.len()) % 8 != 0 || rest.len() < HEADER || wire::u32_at(rest, 0)? != 1
+        {
             return Err("invalid packet message".into());
         }
         let len = wire::u32_at(rest, 4)? as usize;
@@ -44,7 +46,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<&[u8]>> {
             .ok_or("data offset overflow")?;
         let data_len = wire::u32_at(msg, 12)? as usize;
         let end = start.checked_add(data_len).ok_or("data length overflow")?;
-        if start < HEADER || !(14..=FRAME_LIMIT).contains(&data_len) {
+        if start < HEADER || start % 4 != 0 || !(14..=FRAME_LIMIT).contains(&data_len) {
             return Err("invalid Ethernet payload range".into());
         }
         // Connectionless Ethernet only; reject unsupported auxiliary metadata.
