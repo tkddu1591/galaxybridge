@@ -2,6 +2,7 @@ use super::command;
 use crate::Result;
 use std::{
     net::Ipv4Addr,
+    process::Output,
     time::{Duration, Instant},
 };
 
@@ -44,15 +45,7 @@ impl Snapshot {
     }
     fn query(args: &[&str]) -> Result<Option<Self>> {
         let result = command::run("/sbin/route", args)?;
-        if !result.status.success() {
-            if String::from_utf8_lossy(&result.stderr).contains("not in table") {
-                return Ok(None);
-            }
-            return Err("cannot inspect default route; refusing routing changes".into());
-        }
-        Self::parse(&String::from_utf8(result.stdout)?)
-            .map(Some)
-            .ok_or_else(|| "unrecognized default route; refusing routing changes".into())
+        Reply::parse(&result)
     }
     pub fn vpn_present() -> Result<bool> {
         let table = command::text("/usr/sbin/netstat", &["-rn", "-f", "inet"])?;
@@ -112,6 +105,27 @@ impl Snapshot {
     }
     pub fn is_vpn(&self) -> bool {
         self.interface.starts_with("utun")
+    }
+}
+
+/// Classifies route(8) output independently of its unreliable exit status.
+pub struct Reply;
+impl Reply {
+    pub fn parse(output: &Output) -> Result<Option<Snapshot>> {
+        let stdout = std::str::from_utf8(&output.stdout)?.trim();
+        let stderr = std::str::from_utf8(&output.stderr)?.trim();
+        // Darwin can exit successfully when RTM_GET reports ESRCH. This exact
+        // empty reply means that a default may safely be added. Contradictory
+        // output and all other diagnostics remain inspection failures.
+        if stdout.is_empty() && stderr == "route: writing to routing socket: not in table" {
+            return Ok(None);
+        }
+        if !output.status.success() || !stderr.is_empty() {
+            return Err("cannot inspect default route; refusing routing changes".into());
+        }
+        Snapshot::parse(stdout)
+            .map(Some)
+            .ok_or_else(|| "unrecognized default route; refusing routing changes".into())
     }
 }
 

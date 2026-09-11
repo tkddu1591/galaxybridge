@@ -7,6 +7,8 @@ This record describes agent-assisted development review, not an independent prof
 | An unparsed `link#N` VPN gateway could be mistaken for no default route | Preserve interface metadata separately from an optional IPv4 gateway; fail closed on unknown route state |
 | Overlapping phone/Wi-Fi subnets could select the wrong interface | Pass the intended `-ifp` and verify the default route after the change |
 | Split-default VPN routes were not detected | Inspect the actual IPv4 route-table Netif column for `utun` routes |
+| macOS `route get` can report a missing default with exit status zero, preventing fallback restoration | Recognize the exact missing-route diagnostic with empty output independently of exit status; continue to reject unknown or conflicting output |
+| Undrained subprocess pipes could block network inspection on large output | Drain both pipes while the command runs, with bounded output and a timeout |
 | USB short-packet termination byte was included in RNDIS MessageLength | Keep transport padding outside the protocol message length |
 | Legal long zero padding could terminate a session | Accept bounded zero padding and reject corrupted/nonzero trailers |
 | Control responses were polled without RESPONSE_AVAILABLE | Claim the interrupt endpoint and validate bounded notifications before response reads |

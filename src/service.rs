@@ -36,17 +36,36 @@ struct Connection {
 }
 impl Drop for Connection {
     fn drop(&mut self) {
+        let started = Instant::now();
         let owned = self.pair.system.clone();
+        eprintln!(
+            "GalaxyBridge: disconnecting {owned}; fallback interface: {}",
+            self.previous
+                .as_ref()
+                .map_or("none", |route| route.interface.as_str())
+        );
         // No more USB frames may arrive while IPConfiguration removes the
         // temporary service. Restore fallback routes only after that removal.
         drop(self.worker.take());
         drop(self.bpf.take());
+        eprintln!(
+            "GalaxyBridge: transport stopped after {:?}",
+            started.elapsed()
+        );
         if let Err(error) = self.pair.remove() {
             eprintln!("GalaxyBridge: interface cleanup: {error}");
         }
+        eprintln!(
+            "GalaxyBridge: interface cleanup completed after {:?}",
+            started.elapsed()
+        );
         if let Err(error) = Recovery::restore(self.previous.as_ref(), &owned) {
             eprintln!("GalaxyBridge: fallback recovery: {error}");
         }
+        eprintln!(
+            "GalaxyBridge: fallback check completed after {:?}",
+            started.elapsed()
+        );
     }
 }
 
