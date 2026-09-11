@@ -104,6 +104,8 @@ No SIP changes, Reduced Security mode, USB debugging, packet-content logging, te
 | Physical test device | M3 Pro / macOS 26.5.1 / Galaxy S25 Ultra |
 | USB/RNDIS initialization | Passed without root USB parsing |
 | End-to-end independent-driver internet | DHCP, preferred IPv4 route, HTTPS and Google HTTP 204 passed on the physical test device |
+| Automatic Mac-side connection | The installed launchd service detected the tethering device and connected without a Mac command |
+| USB unplug with Wi-Fi left enabled | Wi-Fi default returned about 0.79 s after USB absence; a fresh HTTPS request succeeded at 1.09 s; no Wi-Fi toggle was used in this check |
 | Other M-series / Galaxy combinations | Not physically verified; please report exact model/OS/protocol |
 | Reboot, sleep/wake, Wi-Fi disabled | Separate validation required |
 
