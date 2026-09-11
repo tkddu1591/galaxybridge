@@ -20,6 +20,10 @@ pub fn run(socket: UnixDatagram, filter: Filter, stop: Arc<AtomicBool>) -> Resul
     if unsafe { libc::geteuid() } == 0 {
         return Err("USB worker must not run as root".into());
     }
+    let supervisor = unsafe { libc::getppid() };
+    if supervisor <= 1 {
+        return Err("USB worker has no live supervisor".into());
+    }
     let mut session = Session::open(&filter)?;
     socket.set_read_timeout(Some(Duration::from_millis(100)))?;
     socket.set_write_timeout(Some(Duration::from_millis(100)))?;
@@ -95,6 +99,10 @@ pub fn run(socket: UnixDatagram, filter: Filter, stop: Arc<AtomicBool>) -> Resul
         let mut last_check = Instant::now();
         let mut failure = None;
         while !stop.load(Ordering::Relaxed) {
+            // Do not retain USB ownership if the supervisor is force-killed.
+            if unsafe { libc::getppid() } != supervisor {
+                break;
+            }
             if receive.is_finished() || transmit.is_finished() {
                 break;
             }

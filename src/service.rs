@@ -1,7 +1,12 @@
 use crate::{
     Result,
     ipc::{Backpressure, Channel, Message},
-    macos::{bpf::Device, interface::Pair, process::Worker, route::Snapshot},
+    macos::{
+        bpf::Device,
+        interface::Pair,
+        process::Worker,
+        route::{Recovery, Snapshot},
+    },
     usb::devices::Filter,
 };
 use std::{
@@ -24,14 +29,24 @@ pub struct Supervisor {
     _lock: File,
 }
 struct Connection {
-    worker: Worker,
-    bpf: Device,
+    worker: Option<Worker>,
+    bpf: Option<Device>,
     pair: Pair,
     previous: Option<Snapshot>,
 }
 impl Drop for Connection {
     fn drop(&mut self) {
-        Snapshot::restore(&self.previous, &self.pair.system);
+        let owned = self.pair.system.clone();
+        // No more USB frames may arrive while IPConfiguration removes the
+        // temporary service. Restore fallback routes only after that removal.
+        drop(self.worker.take());
+        drop(self.bpf.take());
+        if let Err(error) = self.pair.remove() {
+            eprintln!("GalaxyBridge: interface cleanup: {error}");
+        }
+        if let Err(error) = Recovery::restore(self.previous.as_ref(), &owned) {
+            eprintln!("GalaxyBridge: fallback recovery: {error}");
+        }
     }
 }
 
@@ -105,13 +120,13 @@ impl Supervisor {
         socket.set_nonblocking(true)?;
         let worker = Worker::spawn(&self.filter, &child_socket)?;
         drop(child_socket);
+        let mut bpf_buffer = vec![0u8; bpf.buffer_size];
         let mut connection = Connection {
-            worker,
-            bpf,
+            worker: Some(worker),
+            bpf: Some(bpf),
             pair,
             previous,
         };
-        let mut bpf_buffer = vec![0u8; connection.bpf.buffer_size];
         let mut ipc_buffer = [0u8; 1600];
         let started = Instant::now();
         let mut ready = false;
@@ -122,7 +137,12 @@ impl Supervisor {
         let mut received_frames = 0u64;
 
         while !self.stop.load(Ordering::Relaxed) {
-            if let Some(status) = connection.worker.child.try_wait()? {
+            let worker = connection.worker.as_mut().ok_or("USB worker is closed")?;
+            let bpf = connection
+                .bpf
+                .as_mut()
+                .ok_or("network transport is closed")?;
+            if let Some(status) = worker.child.try_wait()? {
                 return Err(format!("USB worker exited ({status})").into());
             }
             if !ready && started.elapsed() > Duration::from_secs(10) {
@@ -135,7 +155,7 @@ impl Supervisor {
                     revents: 0,
                 },
                 libc::pollfd {
-                    fd: connection.bpf.fd(),
+                    fd: bpf.fd(),
                     events: libc::POLLIN,
                     revents: 0,
                 },
@@ -171,7 +191,7 @@ impl Supervisor {
                                 connection.pair.system
                             );
                         }
-                        Message::Frame(frame) if ready => match connection.bpf.write(frame) {
+                        Message::Frame(frame) if ready => match bpf.write(frame) {
                             Ok(()) => received_frames += 1,
                             Err(e) if Backpressure::contains(&e) => {}
                             Err(e) => return Err(e.into()),
@@ -181,9 +201,9 @@ impl Supervisor {
                 }
             }
             if fds[1].revents & libc::POLLIN != 0 {
-                match connection.bpf.read(&mut bpf_buffer) {
+                match bpf.read(&mut bpf_buffer) {
                     Ok(n) if ready => {
-                        for frame in connection.bpf.frames(&bpf_buffer[..n])? {
+                        for frame in bpf.frames(&bpf_buffer[..n])? {
                             sent_frames += 1;
                             match socket.send(&Message::Frame(frame).encode()) {
                                 Ok(_) => (),

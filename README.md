@@ -18,6 +18,8 @@ An independent Android USB tethering driver for Apple Silicon, with optional aut
 
 Only one matching phone is selected. Multiple matching phones cause a refusal rather than an arbitrary choice. Optional product/serial filters reduce accidental selection; they are not device authentication.
 
+When USB disconnects, the owned DHCP/DNS service and interfaces are removed before fallback routing is checked. A still-active previous Wi-Fi/Ethernet service uses its current gateway, rather than an expired saved address. Existing TCP connections may need to reconnect when the public IP changes; this is not seamless connection migration.
+
 ## Install once
 
 Download the arm64 archive and checksum from [Releases](https://github.com/tkddu1591/galaxybridge/releases). Verify the archive before extracting it, review the included installer, then run it from the extracted folder:

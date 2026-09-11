@@ -55,13 +55,34 @@ impl Pair {
         command::text("/usr/sbin/ipconfig", &["set", &self.system, "DHCP"])?;
         Ok(())
     }
+
+    pub fn remove(&mut self) -> Result<()> {
+        // Clear ownership before running commands so Drop cannot later remove
+        // an interface whose name has been reused after this teardown.
+        let system = std::mem::take(&mut self.system);
+        let transport = std::mem::take(&mut self.transport);
+        let mut failure = None;
+        if Self::valid_name(&system) {
+            // Withdraw IPConfiguration's temporary address, routes and resolver
+            // state before destroying the device that owns that DHCP service.
+            if let Err(error) = command::text("/usr/sbin/ipconfig", &["set", &system, "NONE"]) {
+                failure = Some(error);
+            }
+        }
+        for iface in [&transport, &system] {
+            if Self::valid_name(iface) {
+                if let Err(error) = command::text("/sbin/ifconfig", &[iface, "destroy"]) {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
 }
 impl Drop for Pair {
     fn drop(&mut self) {
-        for iface in [&self.transport, &self.system] {
-            if Self::valid_name(iface) {
-                let _ = command::run("/sbin/ifconfig", &[iface, "destroy"]);
-            }
+        if let Err(error) = self.remove() {
+            eprintln!("GalaxyBridge: interface cleanup: {error}");
         }
     }
 }

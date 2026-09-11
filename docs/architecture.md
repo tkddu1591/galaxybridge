@@ -34,9 +34,9 @@ The supervisor applies the MAC, starts DHCP and bridges BPF frames. The BPF desc
 
 ## Failure behavior
 
-Device loss or malformed data ends the worker session. The supervisor stops/reaps its worker and destroys only the pair it created. Automatic mode retries after a delay. It does not weaken validation after a failed connection.
+Device loss or malformed data ends the worker session. The supervisor stops/reaps its worker, closes BPF, withdraws the owned DHCP/DNS service and destroys only its pair. It then checks the previous physical service's current gateway and recovers routing if macOS has not independently selected another default. Automatic mode retries after a delay. It does not weaken validation after a failed connection.
 
-Normal shutdown handles SIGINT/SIGTERM/SIGHUP. A forced kill of the supervisor or an OS crash can prevent destructors from running; leftover virtual interfaces may require a reboot. The tool deliberately does not delete arbitrary pre-existing feth interfaces.
+Normal shutdown handles SIGINT/SIGTERM/SIGHUP. The worker also checks that its original supervisor still exists, so a forced parent exit does not intentionally leave USB ownership behind. A forced kill of the supervisor or an OS crash can prevent interface destructors from running; leftover virtual interfaces may require a reboot. The tool deliberately does not delete arbitrary pre-existing feth interfaces.
 
 The driver favors bounded, reviewable behavior over throughput tuning: eight pending RX transfers, one TX transfer at a time, fixed frame and transfer limits. No performance claim is made until measured on real hardware.
 

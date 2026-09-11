@@ -30,6 +30,8 @@ This is an IPv4 connectivity tool, **not a VPN or leak-prevention product**. Exi
 
 There is no telemetry collector, packet-content logger, background update downloader or credential store. Logs contain lifecycle/errors and aggregate frame counts, not packet payloads. USB serial numbers are printed only when explicitly requested; device errors may still contain operating-system diagnostics. Review/redact logs before sharing them.
 
+A configured serial filter is not a secret: although its plist is root-readable, command arguments or launchd/process inspection may reveal it locally. Do not use serial filters as a confidentiality or authentication mechanism.
+
 SIP, Secure Boot policy and USB debugging do not need to be weakened. These facts do not remove the risk of installing a third-party root service. `feth` is a private macOS interface and can change across OS updates.
 
 ## Supply chain

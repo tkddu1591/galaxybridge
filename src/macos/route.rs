@@ -1,6 +1,9 @@
 use super::command;
 use crate::Result;
-use std::net::Ipv4Addr;
+use std::{
+    net::Ipv4Addr,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
@@ -37,7 +40,10 @@ impl Snapshot {
         })
     }
     pub fn read() -> Result<Option<Self>> {
-        let result = command::run("/sbin/route", &["-n", "get", "default"])?;
+        Self::query(&["-n", "get", "default"])
+    }
+    fn query(args: &[&str]) -> Result<Option<Self>> {
+        let result = command::run("/sbin/route", args)?;
         if !result.status.success() {
             if String::from_utf8_lossy(&result.stderr).contains("not in table") {
                 return Ok(None);
@@ -53,11 +59,14 @@ impl Snapshot {
         Table::has_vpn(&table)
     }
     pub fn apply(&self) -> Result<()> {
-        let gateway = self.gateway.ok_or("cannot apply a non-IPv4 gateway")?;
         let current = Self::read()?;
         if current.as_ref().is_some_and(Self::is_vpn) || Self::vpn_present()? {
             return Err("VPN default detected; refusing to override it".into());
         }
+        self.write(current.as_ref())
+    }
+    fn write(&self, current: Option<&Self>) -> Result<()> {
+        let gateway = self.gateway.ok_or("cannot apply a non-IPv4 gateway")?;
         let action = if current.is_some() { "change" } else { "add" };
         command::text(
             "/sbin/route",
@@ -86,6 +95,9 @@ impl Snapshot {
                 .parse()
                 .ok()?;
         if address.is_unspecified()
+            || address.is_loopback()
+            || address.is_multicast()
+            || address.is_broadcast()
             || gateway.is_unspecified()
             || gateway.is_loopback()
             || gateway.is_multicast()
@@ -101,19 +113,109 @@ impl Snapshot {
     pub fn is_vpn(&self) -> bool {
         self.interface.starts_with("utun")
     }
-    pub fn restore(previous: &Option<Self>, owned: &str) {
-        let Ok(current) = Self::read() else {
-            return;
-        };
-        if current.as_ref().is_some_and(|s| s.interface != owned) {
-            return;
+}
+
+/// Fallback routing after the owned DHCP service and interface are gone.
+pub struct Recovery;
+impl Recovery {
+    pub fn permits(current: Option<&Snapshot>, owned: &str) -> bool {
+        current.is_none_or(|route| route.interface == owned && !route.is_vpn())
+    }
+
+    pub fn select(
+        previous: Option<&Snapshot>,
+        fresh: Option<Snapshot>,
+        active: bool,
+    ) -> Option<Snapshot> {
+        let previous = previous?;
+        if !active || previous.interface.starts_with("feth") || previous.is_vpn() {
+            return None;
         }
-        if let Some(previous) = previous {
-            if !previous.interface.starts_with("feth")
-                && command::text("/usr/sbin/ipconfig", &["getifaddr", &previous.interface]).is_ok()
-            {
-                let _ = previous.apply();
+        fresh.filter(|route| {
+            route.interface == previous.interface
+                && route.gateway.is_some_and(|gateway| {
+                    !gateway.is_unspecified()
+                        && !gateway.is_loopback()
+                        && !gateway.is_multicast()
+                        && !gateway.is_broadcast()
+                })
+        })
+    }
+
+    pub fn restore(previous: Option<&Snapshot>, owned: &str) -> Result<()> {
+        let Some(previous) =
+            previous.filter(|route| !route.interface.starts_with("feth") && !route.is_vpn())
+        else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let mut applied = None;
+        let mut confirmations = 0;
+        loop {
+            let current = Snapshot::read()?;
+            if Snapshot::vpn_present()? {
+                return Ok(());
             }
+            if !Self::permits(current.as_ref(), owned) {
+                // An independently selected default always wins. If it is the
+                // route we just wrote, verify it persists across configd's
+                // asynchronous processing of the removed DHCP service.
+                if applied
+                    .as_ref()
+                    .is_some_and(|route| current.as_ref() == Some(route))
+                {
+                    confirmations += 1;
+                    if confirmations >= 2 {
+                        return Ok(());
+                    }
+                } else {
+                    return Ok(());
+                }
+            } else {
+                confirmations = 0;
+                let active = command::text("/sbin/ifconfig", &[&previous.interface])
+                    .is_ok_and(|text| text.lines().any(|line| line.trim() == "status: active"));
+                let address =
+                    command::text("/usr/sbin/ipconfig", &["getifaddr", &previous.interface])
+                        .ok()
+                        .and_then(|text| text.parse::<Ipv4Addr>().ok())
+                        .is_some_and(|address| {
+                            !address.is_unspecified()
+                                && !address.is_loopback()
+                                && !address.is_multicast()
+                                && !address.is_broadcast()
+                        });
+                if active && address {
+                    // Prefer the current DHCP router, which can differ from
+                    // the gateway saved before a long-running USB session.
+                    // A static service may instead retain a scoped default.
+                    // Never replay a stale cached gateway as the fallback.
+                    let fresh = match Snapshot::dhcp(&previous.interface) {
+                        Some(route) => Some(route),
+                        None => Snapshot::query(&[
+                            "-n",
+                            "get",
+                            "-ifscope",
+                            &previous.interface,
+                            "default",
+                        ])?,
+                    };
+                    if let Some(target) = Self::select(Some(previous), fresh, true) {
+                        let current = Snapshot::read()?;
+                        if !Self::permits(current.as_ref(), owned) || Snapshot::vpn_present()? {
+                            return Ok(());
+                        }
+                        target.write(current.as_ref())?;
+                        applied = Some(target);
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(
+                    "no stable active fallback route appeared within the recovery deadline".into(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(250));
         }
     }
 }
