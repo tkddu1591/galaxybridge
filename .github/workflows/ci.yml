@@ -26,7 +26,8 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-          bash -n install.sh uninstall.sh scripts/build-release.sh scripts/identity.sh
+          bash -n setup.sh install.sh uninstall.sh scripts/build-release.sh scripts/identity.sh
+          python3 scripts/check-setup.py
           python3 scripts/check-installer.py
           python3 scripts/check-release.py
           python3 scripts/check-identity.py

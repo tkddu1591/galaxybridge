@@ -84,6 +84,8 @@ Integrated Rust tests: 78 passed, with two explicit platform/privileged integrat
 
 The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. Automatic-service startup and DHCP have been observed, but the USB worker repeatedly exits during packet parsing. A packed Android RNDIS aggregation compatibility correction is under validation; stable USB transfer and Wi-Fi recovery remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
 
+The public setup bootstrap passed nine non-privileged fixture tests covering verified automatic/manual installation, corrupt and partial downloads, failed Apple-tool/install steps, cleanup, checked README download execution, and the actual inherited kernel file-size/core limits. No root installation or real phone traffic is exercised by these bootstrap fixtures.
+
 ## Remaining risk
 
 The root supervisor and Apple's USB, BPF, network and sandbox implementations are

@@ -22,43 +22,46 @@ When USB disconnects, the owned DHCP/DNS service and interfaces are removed befo
 
 ## Install once
 
-The installer uses Apple's `lipo` and `otool` to verify the release binary. Install **Apple Command Line Tools once** with `xcode-select --install` if they are missing; a configured full Xcode installation also supplies them. This prerequisite is for installer verification only. Running GalaxyBridge requires no Command Line Tools, Rust, or Homebrew.
+> **0.2.0 is still in validation; public installation is not available yet.** The command below is the prepared installation entry point. It stops without administrator authentication if the verified release has not been published. The current physical test reaches DHCP but still needs stable-transfer and unplug-recovery verification with the corrected worker.
 
-Download the arm64 archive and checksum from [Releases](https://github.com/tkddu1591/galaxybridge/releases). Verify the archive before extracting it, review the included installer, then run it from the extracted folder:
+Copy this **one command** into Terminal on an Apple Silicon Mac:
 
 ```sh
-./install.sh
+/bin/bash -c 'setup=$(/usr/bin/curl --disable -fsS --proto "=https" https://raw.githubusercontent.com/tkddu1591/galaxybridge/main/setup.sh) && /bin/bash -c "$setup"'
 ```
 
-This installs the command only. Start a manual session after enabling **USB tethering** on the phone:
+The setup downloads a fixed release, verifies its pinned SHA-256 before extraction, and asks for administrator authentication to install **automatic reconnect**. Afterward, connect your phone and enable **USB tethering**. Normal connections do not need a terminal or another administrator password.
+
+If Apple Command Line Tools are missing, complete the Apple installation dialog that opens. Setup waits for it to finish; if it times out, finish the Apple installation and run the same command again. These tools are used for installation verification; Rust and Homebrew are unnecessary.
+
+The command checks that the bootstrap download succeeded before running it. The bootstrap performs no privileged downloads and delegates installation to the same offline installer. You trust this GitHub repository and HTTPS delivery; a checksum or ad-hoc signature does not establish a separate publisher identity. You can [read setup.sh](https://github.com/tkddu1591/galaxybridge/blob/main/setup.sh) before running it.
+
+An existing installation is preserved. This first-install command does not silently remove it or migrate old versions: use its documented uninstaller before replacing it.
+
+<details>
+<summary>Manual sessions, device filters, and offline installation</summary>
+
+Download the archive and checksum from [Releases](https://github.com/tkddu1591/galaxybridge/releases), verify the archive, and extract it into a folder owned by your account. Run `./install.sh` for manual sessions, or `./install.sh --auto` for automatic reconnect. `setup.sh --manual` also downloads and installs without a background service.
+
+For a manual session, enable USB tethering on the phone, then run:
 
 ```sh
 galaxybridge devices
 sudo galaxybridge connect
 ```
 
-Leave that terminal running. `Ctrl+C` stops the session and cleans up the interfaces it created.
+Keep that terminal open; `Ctrl+C` stops the session. If the convenience command cannot be created safely, use `/Library/PrivilegedHelperTools/io.galaxybridge/galaxybridge`.
 
-If the installer cannot safely create the convenience command, use `/Library/PrivilegedHelperTools/io.galaxybridge/galaxybridge` in place of `galaxybridge`.
-
-For optional automatic reconnect, install with:
-
-```sh
-./install.sh --auto
-```
-
-Installation asks for macOS administrator authentication. Normal automatic connections do not. The release binary needs no Rust, Homebrew, or separate USB driver installation. Upgrades deliberately require uninstalling the previous GalaxyBridge installation first.
-
-To select a particular device:
+To select a specific phone during offline installation:
 
 ```sh
 galaxybridge devices --show-serial
 ./install.sh --auto --serial YOUR_PHONE_SERIAL
-# Or, less specifically:
-./install.sh --auto --vendor 04e8 --product 6863
 ```
 
-The examples are alternatives, not sequential installs. Do not run another RNDIS driver alongside GalaxyBridge.
+Alternatively use `--vendor 04e8 --product 6863`. These are selection hints, not authentication. Do not run another RNDIS driver alongside GalaxyBridge.
+
+</details>
 
 ## Optional: enable tethering just by plugging in
 
@@ -92,7 +95,7 @@ The installer keeps the binary in a root-owned location, validates checksums and
 
 This is **not certified or independently audited security software**. Rust bounds checks and process separation reduce some risks; they do not make an untrusted USB device safe. The phone supplies Ethernet/DHCP traffic to macOS and can become the internet gateway. The worker uses App Sandbox and a dedicated service account. Its allowed USB and IPC channels remain powerful network capabilities; the sandbox does not make arbitrary USB devices trustworthy. The supervisor still runs as root.
 
-No SIP changes, Reduced Security mode, USB debugging, packet-content logging, telemetry service, or automatic code downloads are required. Archive hashes and ad-hoc signatures check integrity, **not publisher identity**. See [SECURITY.md](SECURITY.md) for the full trust boundary and reporting process.
+No SIP changes, Reduced Security mode, USB debugging, packet-content logging, telemetry service, or background code downloads are required. Only the explicitly invoked setup command downloads a release. Archive hashes and ad-hoc signatures check integrity, **not publisher identity**. See [SECURITY.md](SECURITY.md) for the full trust boundary and reporting process.
 
 ## Compatibility and validation
 
@@ -120,6 +123,7 @@ Requires Rust 1.85+ with edition 2024 support and Xcode Command Line Tools. Deve
 MACOSX_DEPLOYMENT_TARGET=13.3 cargo test --locked
 MACOSX_DEPLOYMENT_TARGET=13.3 cargo clippy --all-targets --locked -- -D warnings
 MACOSX_DEPLOYMENT_TARGET=13.3 cargo build --release --locked
+python3 scripts/check-setup.py
 python3 scripts/check-installer.py
 ./scripts/build-release.sh
 ```
