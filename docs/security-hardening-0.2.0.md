@@ -27,7 +27,7 @@ Live installation also established that `dscl` returns the hidden-user field as 
 
 A live installation caught an invalid `install -f 0` option that component-level metadata tests had missed. The installer now supplies an empty symbolic flag list; a new regression executes the complete real copy command (with non-root ownership only substituted for CI), verifying flags, ACLs and retained quarantine.
 
-Additional cleanup tests reject stale/missing account identities, mounted home roots, symlink/hardlink escapes and partial deletion. macOS `find` may return success after an unlink failure, so account removal requires the home to be absent; directory-service deletions also have absence postconditions. Release archives omit builder xattrs, ACLs, flags and local owner names.
+Additional cleanup tests reject stale/missing account identities, mounted home roots, symlink/hardlink escapes and partial deletion. Teardown checks the dedicated launchd user domain separately from current processes: even an idle domain must be removed before deleting the account/home, and unknown lookup failures retain the installation. macOS `find` may return success after an unlink failure, so account removal requires the home to be absent; directory-service deletions also have absence postconditions. Release archives omit builder xattrs, ACLs, flags and local owner names.
 
 ## Parser fuzzing
 
@@ -37,6 +37,12 @@ messages/configurations so mutations could reach beyond initial header checks.
 Exact target hashes, command lines, seeds, tool versions and coverage counters are
 in [the parser report](../fuzz/REPORT.md). Those counters are not coverage percentages.
 These targets do not exercise real USB transfers, the kernel, installer or routing.
+
+A follow-up packed Android aggregation correction passed 6,868,703 additional
+ASan/libFuzzer executions in 181 seconds, with no report or assertion failure.
+It removes only the aggregate-start eight-byte restriction while retaining
+message and payload bounds. See [the compatibility report](../fuzz/PACKED-AGGREGATION.md)
+for the exact revised source hash, test inputs and remaining physical-test gate.
 
 ## App Sandbox evidence
 
@@ -64,18 +70,19 @@ could not be recovered after dropping privileges.
 
 The first system-launched attempt failed because UID dropping did not switch the
 inherited root Mach bootstrap context: secinitd reported an euid/uid mismatch.
-Matching the bootstrap context to the dedicated account fixed the probe. Automatic
-service integration and real phone control/bulk remain separate release gates.
+Matching the bootstrap context to the dedicated account fixed the probe. The automatic service now reaches real phone control and bulk traffic under this
+account. Physical testing then exposed an aggregate-packet compatibility failure
+after DHCP; stable transfer and unplug recovery remain separate release gates.
 
 ## Release validation
 
-The dependency advisory scan performed on 2026-09-11 reported no known RustSec
+The dependency advisory scan performed on 2026-09-14 reported no known RustSec
 vulnerabilities or warnings in the runtime lockfile. A clean advisory scan does
 not cover unknown defects, operating-system issues or all build-tool risks.
 
-Integrated Rust tests: 72 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 18 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
+Integrated Rust tests: 78 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 29 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
 
-The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. Automatic-service bootstrap integration and physical USB/Wi-Fi recovery checks remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
+The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. Automatic-service startup and DHCP have been observed, but the USB worker repeatedly exits during packet parsing. A packed Android RNDIS aggregation compatibility correction is under validation; stable USB transfer and Wi-Fi recovery remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
 
 ## Remaining risk
 

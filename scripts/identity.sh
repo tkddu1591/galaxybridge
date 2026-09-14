@@ -192,14 +192,44 @@ identity::process::state::get() {
     return 1
 }
 
+identity::domain::state::get() {
+    local status
+    if identity::command::run /bin/launchctl print "user/$identity_uid" >/dev/null 2>&1; then
+        return 0
+    else
+        status=$?
+    fi
+    # launchctl's domain-specific ENODOMAIN status is 112. Permission errors,
+    # timeouts, missing services (113), and arbitrary failures are NOT absence.
+    (( status == 112 )) && return 1
+    return 2
+}
+
+identity::domain::absence::check() {
+    local status
+    if identity::domain::state::get; then
+        identity::error 'Worker user domain is still registered; retaining identity and home'
+        return 1
+    else
+        status=$?
+    fi
+    (( status == 1 )) || { identity::error 'Cannot prove worker user-domain absence'; return 1; }
+}
+
 identity::session::stop() {
-    local receipt=$1 status deadline
+    local receipt=$1 status deadline domain_state process_state
     identity::receipt::load "$receipt" || return 1
+    if identity::domain::state::get; then domain_state=0; else domain_state=$?; fi
+    (( domain_state < 2 )) || { identity::error 'Cannot inspect worker user domain before shutdown'; return 1; }
     if identity::process::state::get; then :; else
         status=$?
-        (( status == 1 )) && return 0
-        identity::error 'Cannot inspect worker processes before session shutdown'
-        return 1
+        (( status == 1 )) || { identity::error 'Cannot inspect worker processes before session shutdown'; return 1; }
+    fi
+    if (( domain_state == 1 )); then
+        # An unused or partially installed account can have no domain. It is
+        # removable only when both state checks independently prove quiescence.
+        identity::process::check && identity::domain::absence::check
+        return
     fi
     # App Sandbox starts macOS XPC helpers under the dedicated UID. Ask launchd
     # to remove only that UID's user domain, after proving the current account
@@ -212,19 +242,20 @@ identity::session::stop() {
     }
     deadline=$((SECONDS + 20))
     while (( SECONDS < deadline )); do
-        if identity::process::state::get; then :; else
-            status=$?
-            if (( status == 1 )); then
-                identity::account::check "$receipt" || return 1
-                identity::process::check
-                return
-            fi
+        if identity::domain::state::get; then domain_state=0; else domain_state=$?; fi
+        if identity::process::state::get; then process_state=0; else process_state=$?; fi
+        if (( domain_state == 2 || process_state == 2 )); then
             identity::error 'Cannot verify worker-session quiescence; account and home are retained'
             return 1
         fi
+        if (( domain_state == 1 && process_state == 1 )); then
+            identity::account::check "$receipt" || return 1
+            identity::process::check && identity::domain::absence::check
+            return
+        fi
         identity::command::run /bin/sleep 1 || return 1
     done
-    identity::error 'Worker processes remain after user-domain shutdown; account and home are retained'
+    identity::error 'Worker user domain or processes remain after shutdown; account and home are retained'
     return 1
 }
 
@@ -232,6 +263,7 @@ identity::account::ownership::check() {
     local receipt=$1 partial=${2:-0} kind record expected status exists
     identity::receipt::load "$receipt" || return 1
     identity::process::check || return 1
+    identity::domain::absence::check || return 1
     # Validate EVERY existing record before removing either. During rollback a
     # failed create may have only the nonce; uninstall requires complete settings.
     for kind in /Users /Groups; do
@@ -376,6 +408,7 @@ identity::home::directory::delete() {
     # records are accepted only after the home is gone (or was never created).
     identity::account::check "$receipt" || return 1
     identity::process::check || return 1
+    identity::domain::absence::check || return 1
     identity::home::tree::delete "$identity_home" || { identity::error 'Worker-home deletion failed; account and ownership receipts are retained'; return 1; }
 }
 

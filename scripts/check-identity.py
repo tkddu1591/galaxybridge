@@ -76,12 +76,19 @@ elif tool == 'pgrep':
     running = state.get('process_running') or (args[0] == '-U' and state.get('real_uid_process'))
     sys.exit(0 if running else 1)
 elif tool == 'launchctl':
-    assert args == ['bootout', 'user/60000'], args
+    assert args[1] == 'user/60000', args
+    if args[0] == 'print':
+        if state.get('domain_query_error'):
+            sys.exit(state['domain_query_error'])
+        present = state.get('domain_present', state.get('process_running') or state.get('real_uid_process'))
+        sys.exit(0 if present else 112)
+    assert args[0] == 'bootout', args
     if state.get('bootout_error'):
         sys.exit(5)
     if not state.get('bootout_noop'):
         state['process_running'] = False
         state['real_uid_process'] = False
+        state['domain_present'] = False
         save()
 elif tool == 'mount':
     print(state.get('mount_output', ''))
@@ -236,7 +243,7 @@ class IdentityLifecycle(unittest.TestCase):
         state = json.loads(self.state.read_text())
         self.assertFalse(state['process_running'])
         self.assertEqual(self.records(), before, 'Stopping the domain must not remove account records')
-        actions = [call for call in state['calls'] if call[0] == 'launchctl']
+        actions = [call for call in state['calls'] if call[:2] == ['launchctl', 'bootout']]
         self.assertEqual(actions, [['launchctl', 'bootout', 'user/60000']])
 
     def test_mismatched_guid_prevents_user_domain_action(self):
@@ -246,7 +253,7 @@ class IdentityLifecycle(unittest.TestCase):
         self.update(records=records, process_running=True)
         result = self.run_module('identity::session::stop "$1"')
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(call[0] == 'launchctl' for call in json.loads(self.state.read_text())['calls']))
+        self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in json.loads(self.state.read_text())['calls']))
         self.assertEqual(self.records(), records)
 
     def test_numeric_alias_prevents_user_domain_action(self):
@@ -256,7 +263,7 @@ class IdentityLifecycle(unittest.TestCase):
         self.update(records=records, process_running=True)
         result = self.run_module('identity::session::stop "$1"')
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(call[0] == 'launchctl' for call in json.loads(self.state.read_text())['calls']))
+        self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in json.loads(self.state.read_text())['calls']))
 
     def test_failed_or_noop_bootout_retains_identity_and_receipt(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
@@ -275,7 +282,49 @@ class IdentityLifecycle(unittest.TestCase):
         self.update(process_query_error=True)
         result = self.run_module('identity::session::stop "$1"')
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(call[0] == 'launchctl' for call in json.loads(self.state.read_text())['calls']))
+        self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in json.loads(self.state.read_text())['calls']))
+
+    def test_idle_registered_domain_is_removed_even_without_processes(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        self.update(domain_present=True, process_running=False)
+        result = self.run_module('identity::session::stop "$1"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertFalse(state['domain_present'])
+        self.assertIn(['launchctl', 'bootout', 'user/60000'], state['calls'])
+
+    def test_idle_domain_cannot_survive_successful_noop_bootout(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        self.update(domain_present=True, process_running=False, bootout_noop=True)
+        before = self.records()
+        result = self.run_module('identity::session::stop "$1" && identity::installation::delete "$1"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.records(), before)
+        self.assertTrue(self.receipt.exists())
+
+    def test_only_missing_domain_status_means_absence(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        for error in (1, 3, 5, 113, 124, 142):
+            with self.subTest(error=error):
+                self.update(domain_query_error=error, process_running=False)
+                result = self.run_module('identity::session::stop "$1"')
+                self.assertNotEqual(result.returncode, 0)
+        calls = json.loads(self.state.read_text())['calls']
+        self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in calls))
+
+    def test_absent_domain_and_processes_allow_partial_install_retry(self):
+        result = self.run_module('identity::session::stop "$1"; identity::account::delete "$1" 1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), {})
+        self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in json.loads(self.state.read_text())['calls']))
+
+    def test_account_deletion_itself_rechecks_domain_absence(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        self.update(domain_present=True, process_running=False)
+        before = self.records()
+        result = self.run_module('identity::account::delete "$1"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.records(), before)
 
     def test_real_uid_only_process_is_not_mistaken_for_quiescence(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
