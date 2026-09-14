@@ -17,6 +17,13 @@ for length in [14, 60, 100, 468, 980, 1514]:
     message = words(1, 44 + length, 36, length, 0, 0, 0, 0, 0, 0, 0) + bytes([0x42]) * length
     (protocol / f"packet-{length}").write_bytes(message)
     (protocol / f"packet-padded-{length}").write_bytes(message + bytes(512))
+for remainder in range(8):
+    frames = [(60 + remainder, 0x42), (61, 0x24), (63, 0x81)]
+    aggregate = b"".join(
+        words(1, 44 + length, 36, length, 0, 0, 0, 0, 0, 0, 0) + bytes([value]) * length
+        for length, value in frames
+    )
+    (protocol / f"packed-aggregate-{remainder}").write_bytes(aggregate)
 (protocol / "initialize").write_bytes(words(0x80000002, 52, 1, 0, 1, 0, 1, 0, 1, 16384, 0, 0, 0))
 (protocol / "query").write_bytes(words(0x80000004, 30, 1, 0, 6, 16) + bytes([2, 1, 2, 3, 4, 5]))
 (protocol / "set").write_bytes(words(0x80000005, 16, 1, 0))

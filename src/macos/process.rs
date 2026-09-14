@@ -255,6 +255,11 @@ impl Drop for Worker {
         if let Err(error) = self.stop() {
             eprintln!("GalaxyBridge: worker cleanup: {error}");
         }
+        // IPC can close before the supervisor's next poll. Preserve the last
+        // bounded diagnostics after the worker has been stopped/reaped.
+        if let Err(error) = self.diagnostics() {
+            eprintln!("GalaxyBridge: final worker diagnostics: {error}");
+        }
     }
 }
 

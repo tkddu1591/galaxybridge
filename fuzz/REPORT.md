@@ -3,6 +3,11 @@
 This is a bounded adversarial test result for the v0.2.0 working tree, not a
 security certification or a claim that all Android devices are supported.
 
+The 2026-09-11 campaign below is historical. The later packed-aggregation
+compatibility correction is documented in [PACKED-AGGREGATION.md](PACKED-AGGREGATION.md).
+In particular, aggregate message starts no longer require eight-byte alignment;
+message and payload bounds remain mandatory.
+
 ## Findings corrected
 
 - **Availability, P2:** nusb 0.2.7's `transfer_blocking` cancels a timed-out
@@ -23,8 +28,9 @@ security certification or a claim that all Android devices are supported.
   own message type, length and status; unsupported initialization metadata and
   malformed status buffers are rejected. Notifications require the exact
   eight-byte format. Media-disconnect indications end the session, and more than
-  32 responses without the requested completion fail closed. Packet data offsets
-  and aggregate starts must obey RNDIS alignment.
+  32 responses without the requested completion fail closed. At this campaign's
+  revision, packet data offsets and aggregate starts required RNDIS alignment;
+  the latter requirement was subsequently corrected for Android compatibility.
 
 These findings concern availability, selection ambiguity and protocol acceptance.
 The review did not establish an exploitable memory-corruption or privilege-

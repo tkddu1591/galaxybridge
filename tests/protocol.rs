@@ -137,6 +137,64 @@ fn aggregated_packets_follow_message_length_including_padding() {
 }
 
 #[test]
+fn packed_android_aggregates_preserve_frames_at_every_byte_alignment() {
+    for remainder in 0..8 {
+        let first = vec![0x42; 60 + remainder];
+        let second = vec![0x24; 61];
+        let third = vec![0x81; 63];
+        // These lengths never need a USB terminator. Each message immediately
+        // follows its predecessor's MessageLength, including odd offsets.
+        let mut transfer = [first.as_slice(), second.as_slice(), third.as_slice()]
+            .into_iter()
+            .flat_map(|frame| packet::encode(frame, 512, TRANSFER_LIMIT).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            packet::decode(&transfer).unwrap(),
+            [first.as_slice(), second.as_slice(), third.as_slice()]
+        );
+        transfer.resize(512, 0);
+        assert_eq!(
+            packet::decode(&transfer).unwrap(),
+            [first.as_slice(), second.as_slice(), third.as_slice()]
+        );
+    }
+}
+
+#[test]
+fn malformed_second_message_in_packed_aggregate_fails_the_entire_transfer() {
+    let first = packet::encode(&[0x42; 61], 512, TRANSFER_LIMIT).unwrap();
+    let second = packet::encode(&[0x24; 60], 512, TRANSFER_LIMIT).unwrap();
+    for (offset, value) in [
+        (0, 7u32),
+        (4, 0),
+        (4, 43),
+        (4, u32::MAX),
+        (8, 0),
+        (8, u32::MAX),
+        (12, 61),
+        (12, u32::MAX),
+        (20, 1),
+        (32, 1),
+    ] {
+        let mut malformed = second.clone();
+        malformed[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        let transfer = [first.clone(), malformed].concat();
+        assert!(
+            packet::decode(&transfer).is_err(),
+            "second header field {offset}"
+        );
+    }
+    for length in 1..44 {
+        let mut transfer = [first.clone(), second.clone()].concat();
+        transfer.extend(vec![0x7f; length]);
+        assert!(packet::decode(&transfer).is_err());
+    }
+    // A valid later header never permits skipping corruption between messages.
+    let transfer = [first, vec![0; 7], second].concat();
+    assert!(packet::decode(&transfer).is_err());
+}
+
+#[test]
 fn malformed_offsets_lengths_and_metadata_are_rejected() {
     let valid = packet::encode(&frame(), 512, TRANSFER_LIMIT).unwrap();
     for (offset, value) in [

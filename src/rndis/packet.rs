@@ -32,9 +32,22 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<&[u8]>> {
         if rest.iter().all(|b| *b == 0) {
             break;
         }
-        if (bytes.len() - rest.len()) % 8 != 0 || rest.len() < HEADER || wire::u32_at(rest, 0)? != 1
-        {
-            return Err("invalid packet message".into());
+        let offset = bytes.len() - rest.len();
+        // Some Android gadget drivers pack messages without eight-byte
+        // alignment. Walk only the preceding validated MessageLength; never
+        // scan or round forward to guess a new header. wire reads copy bytes,
+        // so an unaligned message start does not require an aligned pointer.
+        if rest.len() < HEADER {
+            return Err(format!(
+                "truncated packet header: {} bytes at offset {offset}",
+                rest.len()
+            )
+            .into());
+        }
+        if wire::u32_at(rest, 0)? != 1 {
+            return Err(
+                format!("unexpected packet message type at transfer offset {offset}").into(),
+            );
         }
         let len = wire::u32_at(rest, 4)? as usize;
         if len < HEADER || len > rest.len() {

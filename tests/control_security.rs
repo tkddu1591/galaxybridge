@@ -93,7 +93,7 @@ fn completion_type_requires_its_full_fixed_header() {
 }
 
 #[test]
-fn packet_offsets_and_aggregate_starts_obey_rndis_alignment() {
+fn packet_data_offsets_stay_aligned_while_aggregate_messages_may_be_packed() {
     let mut packet = Fixture::words(&[1, 105, 37, 60, 0, 0, 0, 0, 0, 0, 0]);
     packet.push(0);
     packet.extend([0x42; 60]);
@@ -108,7 +108,11 @@ fn packet_offsets_and_aggregate_starts_obey_rndis_alignment() {
         vec![0x24; 60],
     ]
     .concat();
-    assert!(packet::decode(&[first, second].concat()).is_err());
+    let aggregate = [first, second].concat();
+    assert_eq!(
+        packet::decode(&aggregate).unwrap(),
+        [vec![0x42; 61], vec![0x24; 60]]
+    );
 }
 
 #[test]
