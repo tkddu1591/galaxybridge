@@ -245,7 +245,7 @@ identity::home::create() {
     identity::home::vacancy::check || return 1
     /bin/mkdir -m 755 "$identity_data" || return 1
     identity_home_created=1
-    /usr/bin/install -f 0 -o root -g wheel -m 600 "$receipt" "$identity_data/IDENTITY" || return 1
+    /usr/bin/install -f '' -o root -g wheel -m 600 "$receipt" "$identity_data/IDENTITY" || return 1
     /bin/chmod -N "$identity_data/IDENTITY" || return 1
     /bin/mkdir -m 700 "$identity_home" || return 1
     identity_home_directory_created=1

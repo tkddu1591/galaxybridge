@@ -153,7 +153,7 @@ installer::file::metadata::clear() {
 }
 
 installer::file::copy() {
-    /usr/bin/install -f 0 -o root -g wheel -m "$3" "$1" "$2"
+    /usr/bin/install -f '' -o root -g wheel -m "$3" "$1" "$2"
     installer::file::metadata::clear "$2" "$3"
     installer::file::check "$2"
 }

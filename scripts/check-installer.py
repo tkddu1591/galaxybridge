@@ -272,6 +272,31 @@ class InstallerMetadata(unittest.TestCase):
             finally:
                 subprocess.run(['/usr/bin/chflags', '0', str(target)], check=False)
 
+    def test_actual_copy_command_accepts_empty_flags_and_clears_source_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'source'
+            target = Path(temporary) / 'target'
+            source.write_text('Actual install command regression\n')
+            subprocess.run(['/bin/chmod', '+a', 'everyone allow write', str(source)], check=True)
+            subprocess.run(['/usr/bin/chflags', 'hidden', str(source)], check=True)
+            quarantine = '0083;00000000;GalaxyBridgeTests;'
+            subprocess.run(['/usr/bin/xattr', '-w', 'com.apple.quarantine', quarantine, str(source)], check=True)
+            prefix = (REPOSITORY / 'install.sh').read_text().split('\nwhile (( $# )); do', 1)[0]
+            # Exercise the production copy command with real install/chflags/chmod.
+            # Only account ownership expectations are substituted for non-root CI.
+            prefix = prefix.replace('-o root -g wheel', f'-o {os.getuid()} -g {os.getgid()}')
+            prefix = prefix.replace('== 0 &&', f'== {os.getuid()} &&')
+            result = subprocess.run(['/bin/bash', '-c', prefix + '\ninstaller::file::copy "$1" "$2" 755',
+                                     'copy-test', str(source), str(target)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+            self.assertEqual(target.stat().st_flags, 0)
+            self.assertEqual(target.stat().st_mode & 0o7777, 0o755)
+            self.assertNotIn(' allow ', subprocess.check_output(['/bin/ls', '-le', str(target)], text=True))
+            copied = subprocess.check_output(['/usr/bin/xattr', '-p', 'com.apple.quarantine', str(target)], text=True).strip()
+            # macOS can rewrite provenance fields during install; quarantine must remain.
+            self.assertTrue(int(copied.split(';')[0], 16) & 0x80)
+
     def test_unsafe_installed_uninstaller_is_rejected_before_sudo(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -329,7 +354,9 @@ class WorkerEntitlements(unittest.TestCase):
             result = subprocess.run(['/bin/bash', '-c', prefix + '\ninstaller::file::quarantine::copy "$1" "$2"',
                                      'quarantine-test', str(source), str(target)], capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(subprocess.check_output(['/usr/bin/xattr', '-p', 'com.apple.quarantine', str(target)], text=True).strip(), quarantine)
+            copied = subprocess.check_output(['/usr/bin/xattr', '-p', 'com.apple.quarantine', str(target)], text=True).strip()
+            # macOS can rewrite provenance fields during install; quarantine must remain.
+            self.assertTrue(int(copied.split(';')[0], 16) & 0x80)
 
 
 @unittest.skipUnless(__import__('sys').platform == 'darwin', 'macOS filesystem metadata required')

@@ -23,6 +23,8 @@ inputs or writable paths may be controlled by another local user.
 | Unsupported control metadata and ambiguous message boundaries expanded parser acceptance | Strict message/status/notification/offset/alignment validation | Deterministic protocol regressions and seeded ASan fuzzing |
 | The root bridge accepted unrelated Ethernet types | Enforce IPv4/ARP only in both directions | Root frame-policy tests; no privileged DHCP parser added |
 
+A live installation caught an invalid `install -f 0` option that component-level metadata tests had missed. The installer now supplies an empty symbolic flag list; a new regression executes the complete real copy command (with non-root ownership only substituted for CI), verifying flags, ACLs and retained quarantine.
+
 Additional cleanup tests reject stale/missing account identities, mounted home roots, symlink/hardlink escapes and partial deletion. macOS `find` may return success after an unlink failure, so account removal requires the home to be absent; directory-service deletions also have absence postconditions. Release archives omit builder xattrs, ACLs, flags and local owner names.
 
 ## Parser fuzzing
@@ -57,7 +59,7 @@ The dependency advisory scan performed on 2026-09-11 reported no known RustSec
 vulnerabilities or warnings in the runtime lockfile. A clean advisory scan does
 not cover unknown defects, operating-system issues or all build-tool risks.
 
-Integrated Rust tests: 72 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 28 passed; account/home lifecycle tests: 18 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
+Integrated Rust tests: 72 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 18 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
 
 The root-only real/effective/saved credential test, dedicated-account sandbox runtime probe and physical USB/Wi-Fi recovery checks remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
 
