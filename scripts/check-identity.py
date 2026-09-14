@@ -78,10 +78,12 @@ elif tool == 'pgrep':
 elif tool == 'launchctl':
     assert args[1] == 'user/60000', args
     if args[0] == 'print':
-        if state.get('domain_query_error'):
-            sys.exit(state['domain_query_error'])
-        present = state.get('domain_present', state.get('process_running') or state.get('real_uid_process'))
-        sys.exit(0 if present else 112)
+        # Reproduce the live bug: resolving a user target recreates its context.
+        state['domain_present'] = True
+        state['process_running'] = True
+        state['user_print_recreated_domain'] = True
+        save()
+        sys.exit(0)
     assert args[0] == 'bootout', args
     if state.get('bootout_error'):
         sys.exit(5)
@@ -192,7 +194,8 @@ class IdentityLifecycle(unittest.TestCase):
 
     def test_partial_creation_rollback_uses_guid_ownership(self):
         self.update(fail_attribute='UserShell')
-        result = self.run_module('if identity::account::create "$1"; then exit 90; fi\nidentity::account::delete "$1" 1')
+        self.receipt.unlink()
+        result = self.run_module('identity::receipt::create "$1"; if identity::account::create "$1"; then exit 90; fi\nidentity::account::delete "$1" 1')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.records(), {})
         calls = json.loads(self.state.read_text())['calls']
@@ -293,38 +296,68 @@ class IdentityLifecycle(unittest.TestCase):
         self.assertFalse(state['domain_present'])
         self.assertIn(['launchctl', 'bootout', 'user/60000'], state['calls'])
 
-    def test_idle_domain_cannot_survive_successful_noop_bootout(self):
+    def test_shutdown_never_queries_a_user_domain_that_would_recreate_it(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
-        self.update(domain_present=True, process_running=False, bootout_noop=True)
-        before = self.records()
-        result = self.run_module('identity::session::stop "$1" && identity::installation::delete "$1"')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.records(), before)
-        self.assertTrue(self.receipt.exists())
-
-    def test_only_missing_domain_status_means_absence(self):
-        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
-        for error in (1, 3, 5, 113, 124, 142):
-            with self.subTest(error=error):
-                self.update(domain_query_error=error, process_running=False)
-                result = self.run_module('identity::session::stop "$1"')
-                self.assertNotEqual(result.returncode, 0)
-        calls = json.loads(self.state.read_text())['calls']
-        self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in calls))
-
-    def test_absent_domain_and_processes_allow_partial_install_retry(self):
-        result = self.run_module('identity::session::stop "$1"; identity::account::delete "$1" 1')
+        self.update(domain_present=True, process_running=True)
+        result = self.run_module('identity::session::stop "$1"; identity::session::proof::check')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.records(), {})
+        state = json.loads(self.state.read_text())
+        self.assertFalse(state.get('user_print_recreated_domain', False))
+        self.assertFalse(state['domain_present'])
+        self.assertFalse(any(call[:2] == ['launchctl', 'print'] for call in state['calls']))
+
+    def test_persisted_orphan_without_live_proof_is_retained(self):
+        result = self.run_module('identity::account::delete "$1" 1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.receipt.exists())
         self.assertFalse(any(call[:2] == ['launchctl', 'bootout'] for call in json.loads(self.state.read_text())['calls']))
 
-    def test_account_deletion_itself_rechecks_domain_absence(self):
+    def test_account_deletion_itself_requires_teardown_proof(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
-        self.update(domain_present=True, process_running=False)
         before = self.records()
         result = self.run_module('identity::account::delete "$1"')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.records(), before)
+
+    def test_teardown_token_rejects_changed_uid_gid_or_guids(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        for change in ('identity_uid=60001', 'identity_gid=60001',
+                       'identity_user_guid=AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+                       'identity_group_guid=AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'):
+            with self.subTest(change=change):
+                result = self.run_module('identity::session::stop "$1"; ' + change + '; identity::session::proof::check')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('No matching in-process', result.stderr)
+
+    def test_receipt_created_in_another_shell_is_not_fresh_provenance(self):
+        self.receipt.unlink()
+        self.assertEqual(self.run_module('identity::receipt::create "$1"').returncode, 0)
+        result = self.run_module('identity::receipt::load "$1"; identity::session::proof::check 1')
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_fresh_receipt_with_home_started_cannot_skip_teardown(self):
+        self.receipt.unlink()
+        result = self.run_module('identity::receipt::create "$1"; identity_home_created=1; identity::session::proof::check 1')
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_failed_install_with_home_runs_scoped_teardown_before_cleanup(self):
+        data = self.directory / 'data'
+        home = data / 'worker'
+        home.mkdir(parents=True)
+        (data / 'IDENTITY').write_text(RECEIPT)
+        (home / 'container-state').write_text('Partial installation state\n')
+        self.assertEqual(self.run_module('identity::account::create "$1"', home_fixture=True).returncode, 0)
+        self.update(domain_present=True, process_running=True)
+        result = self.run_module('identity_home_created=1; identity_home_directory_created=1; identity::installation::delete "$1" 1', home_fixture=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(data.exists())
+        self.assertEqual(self.records(), {})
+        state = json.loads(self.state.read_text())
+        actions = state['calls']
+        bootout = actions.index(['launchctl', 'bootout', 'user/60000'])
+        first_delete = next(i for i, call in enumerate(actions) if call[:3] == ['dscl', '/Local/Default', '-delete'])
+        self.assertLess(bootout, first_delete)
+        self.assertFalse(state.get('user_print_recreated_domain', False))
 
     def test_real_uid_only_process_is_not_mistaken_for_quiescence(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
@@ -335,21 +368,17 @@ class IdentityLifecycle(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(json.loads(self.state.read_text())['real_uid_process'])
 
-    def test_complete_removal_and_retry_after_partial_deletion(self):
+    def test_same_invocation_removal_retry_preserves_teardown_proof(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
-        records = self.records()
-        del records['/Users/_galaxybridge']
-        self.update(records=records)
-        result = self.run_module('identity::account::delete "$1"')
+        result = self.run_module('identity::session::stop "$1"; identity::command::run /usr/bin/dscl /Local/Default -delete /Users/_galaxybridge; identity::account::delete "$1"; identity::account::delete "$1"')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.records(), {})
-        self.assertEqual(self.run_module('identity::account::delete "$1"').returncode, 0)
 
     def test_success_status_without_record_removal_is_not_accepted(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
         self.update(delete_noop='/Users/_galaxybridge')
         records = self.records()
-        result = self.run_module('identity::account::delete "$1"')
+        result = self.run_module('identity::session::stop "$1"; identity::account::delete "$1"')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('record remains after deletion', result.stderr)
         self.assertEqual(self.records(), records)
@@ -401,7 +430,7 @@ class IdentityLifecycle(unittest.TestCase):
             created = self.run_module('identity::account::create "$1"', home_fixture=True)
             self.assertEqual(created.returncode, 0, created.stderr)
             before = self.records()
-            result = self.run_module('identity::installation::delete "$1"', home_fixture=True)
+            result = self.run_module('identity::session::stop "$1"; identity::installation::delete "$1"', home_fixture=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(self.records(), before)
             self.assertTrue(self.receipt.exists())
@@ -421,7 +450,7 @@ class IdentityLifecycle(unittest.TestCase):
         records = self.records()
         records['/Users/_galaxybridge']['GeneratedUID'] = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
         self.update(records=records)
-        result = self.run_module('identity::installation::delete "$1"', home_fixture=True)
+        result = self.run_module('identity::session::stop "$1"; identity::installation::delete "$1"', home_fixture=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(saved.read_text(), 'Must survive ownership mismatch\n')
         self.assertEqual(self.records(), records)
@@ -437,7 +466,7 @@ class IdentityLifecycle(unittest.TestCase):
         records = self.records()
         del records['/Users/_galaxybridge']
         self.update(records=records)
-        result = self.run_module('identity::installation::delete "$1"', home_fixture=True)
+        result = self.run_module('identity::session::stop "$1"; identity::installation::delete "$1"', home_fixture=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(saved.exists())
         self.assertEqual(self.records(), records)

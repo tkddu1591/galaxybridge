@@ -27,7 +27,7 @@ Live installation also established that `dscl` returns the hidden-user field as 
 
 A live installation caught an invalid `install -f 0` option that component-level metadata tests had missed. The installer now supplies an empty symbolic flag list; a new regression executes the complete real copy command (with non-root ownership only substituted for CI), verifying flags, ACLs and retained quarantine.
 
-Additional cleanup tests reject stale/missing account identities, mounted home roots, symlink/hardlink escapes and partial deletion. Teardown checks the dedicated launchd user domain separately from current processes: even an idle domain must be removed before deleting the account/home, and unknown lookup failures retain the installation. macOS `find` may return success after an unlink failure, so account removal requires the home to be absent; directory-service deletions also have absence postconditions. Release archives omit builder xattrs, ACLs, flags and local owner names.
+Additional cleanup tests reject stale/missing account identities, mounted home roots, symlink/hardlink escapes and partial deletion. Teardown always requests removal of the verified dedicated launchd user domain, including an idle one. It does not query a per-user domain while waiting: resolving that context can recreate it. Successful scoped bootout and real/effective-UID process quiescence create a temporary proof bound to both numeric IDs and both ownership UUIDs; destructive steps require that proof. A partial-install exception is limited to a receipt created by the same invocation before any home was created. macOS `find` may return success after an unlink failure, so account removal requires the home to be absent; directory-service deletions also have absence postconditions. Release archives omit builder xattrs, ACLs, flags and local owner names.
 
 ## Parser fuzzing
 
@@ -80,7 +80,7 @@ The dependency advisory scan performed on 2026-09-14 reported no known RustSec
 vulnerabilities or warnings in the runtime lockfile. A clean advisory scan does
 not cover unknown defects, operating-system issues or all build-tool risks.
 
-Integrated Rust tests: 78 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 29 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
+Integrated Rust tests: 78 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 32 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
 
 The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. Automatic-service startup and DHCP have been observed, but the USB worker repeatedly exits during packet parsing. A packed Android RNDIS aggregation compatibility correction is under validation; stable USB transfer and Wi-Fi recovery remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
 

@@ -8,6 +8,8 @@ readonly identity_data=/private/var/db/io.galaxybridge
 readonly identity_home=/private/var/db/io.galaxybridge/worker
 identity_home_created=0
 identity_home_directory_created=0
+identity_fresh_receipt=
+identity_session_proof=
 
 identity::error() { printf 'GalaxyBridge identity: %s\n' "$*" >&2; return 1; }
 
@@ -108,7 +110,8 @@ identity::receipt::create() {
         set -o noclobber
         printf 'version=1\nuid=%s\ngid=%s\nuser_guid=%s\ngroup_guid=%s\n' "$candidate" "$candidate" "$user_guid" "$group_guid" > "$file"
     ) || return 1
-    identity::receipt::load "$file"
+    identity::receipt::load "$file" || return 1
+    identity_fresh_receipt="$identity_uid:$identity_gid:$identity_user_guid:$identity_group_guid"
 }
 
 identity::account::create() {
@@ -192,70 +195,57 @@ identity::process::state::get() {
     return 1
 }
 
-identity::domain::state::get() {
-    local status
-    if identity::command::run /bin/launchctl print "user/$identity_uid" >/dev/null 2>&1; then
-        return 0
-    else
-        status=$?
+identity::session::proof::check() {
+    local partial=${1:-0} expected="$identity_uid:$identity_gid:$identity_user_guid:$identity_group_guid"
+    if [[ -n "$identity_session_proof" && "$identity_session_proof" == "$expected" ]]; then
+        identity::process::check
+        return
     fi
-    # launchctl's domain-specific ENODOMAIN status is 112. Permission errors,
-    # timeouts, missing services (113), and arbitrary failures are NOT absence.
-    (( status == 112 )) && return 1
-    return 2
-}
-
-identity::domain::absence::check() {
-    local status
-    if identity::domain::state::get; then
-        identity::error 'Worker user domain is still registered; retaining identity and home'
-        return 1
-    else
-        status=$?
+    # Only this invocation's newly created receipt can prove a partial install
+    # never reached a worker home or launch. An arbitrary persisted orphan is
+    # not evidence of a stopped launchd context and must be retained for review.
+    if (( partial && ! identity_home_created && ! identity_home_directory_created )) &&
+        [[ -n "$identity_fresh_receipt" && "$identity_fresh_receipt" == "$expected" ]]; then
+        identity::process::check
+        return
     fi
-    (( status == 1 )) || { identity::error 'Cannot prove worker user-domain absence'; return 1; }
+    identity::error 'No matching in-process worker-session teardown proof; retaining identity and home'
 }
 
 identity::session::stop() {
-    local receipt=$1 status deadline domain_state process_state
-    identity::receipt::load "$receipt" || return 1
-    if identity::domain::state::get; then domain_state=0; else domain_state=$?; fi
-    (( domain_state < 2 )) || { identity::error 'Cannot inspect worker user domain before shutdown'; return 1; }
+    local receipt=$1 status deadline
+    identity_session_proof=
+    identity::account::check "$receipt" || return 1
     if identity::process::state::get; then :; else
         status=$?
         (( status == 1 )) || { identity::error 'Cannot inspect worker processes before session shutdown'; return 1; }
     fi
-    if (( domain_state == 1 )); then
-        # An unused or partially installed account can have no domain. It is
-        # removable only when both state checks independently prove quiescence.
-        identity::process::check && identity::domain::absence::check
-        return
-    fi
-    # App Sandbox starts macOS XPC helpers under the dedicated UID. Ask launchd
-    # to remove only that UID's user domain, after proving the current account
-    # still belongs exclusively to this installation. Never target gui/<uid>,
-    # the invoking user's domain, or individual PIDs (which can be recycled).
-    identity::account::check "$receipt" || return 1
+    # Always remove the dedicated user domain, including an idle one. Do not
+    # call `launchctl print user/<uid>`: resolving a user context can create it.
+    # `print system` is also deliberately not parsed; its output is not an API.
+    # Full account ownership above is mandatory before this one scoped action.
     identity::command::run /bin/launchctl bootout "user/$identity_uid" || {
         identity::error 'Could not stop the dedicated worker user domain; account and home are retained'
         return 1
     }
     deadline=$((SECONDS + 20))
     while (( SECONDS < deadline )); do
-        if identity::domain::state::get; then domain_state=0; else domain_state=$?; fi
-        if identity::process::state::get; then process_state=0; else process_state=$?; fi
-        if (( domain_state == 2 || process_state == 2 )); then
+        if identity::process::state::get; then :; else
+            status=$?
+            if (( status == 1 )); then
+                identity::account::check "$receipt" || return 1
+                identity::process::check || return 1
+                # A successful bootout plus process quiescence is retained only
+                # in this shell, bound to both IDs and both ownership nonces.
+                identity_session_proof="$identity_uid:$identity_gid:$identity_user_guid:$identity_group_guid"
+                return 0
+            fi
             identity::error 'Cannot verify worker-session quiescence; account and home are retained'
             return 1
         fi
-        if (( domain_state == 1 && process_state == 1 )); then
-            identity::account::check "$receipt" || return 1
-            identity::process::check && identity::domain::absence::check
-            return
-        fi
         identity::command::run /bin/sleep 1 || return 1
     done
-    identity::error 'Worker user domain or processes remain after shutdown; account and home are retained'
+    identity::error 'Worker processes remain after shutdown; account and home are retained'
     return 1
 }
 
@@ -263,7 +253,7 @@ identity::account::ownership::check() {
     local receipt=$1 partial=${2:-0} kind record expected status exists
     identity::receipt::load "$receipt" || return 1
     identity::process::check || return 1
-    identity::domain::absence::check || return 1
+    identity::session::proof::check "$partial" || return 1
     # Validate EVERY existing record before removing either. During rollback a
     # failed create may have only the nonce; uninstall requires complete settings.
     for kind in /Users /Groups; do
@@ -408,7 +398,7 @@ identity::home::directory::delete() {
     # records are accepted only after the home is gone (or was never created).
     identity::account::check "$receipt" || return 1
     identity::process::check || return 1
-    identity::domain::absence::check || return 1
+    identity::session::proof::check || return 1
     identity::home::tree::delete "$identity_home" || { identity::error 'Worker-home deletion failed; account and ownership receipts are retained'; return 1; }
 }
 
@@ -431,6 +421,13 @@ identity::home::parent::delete() {
 }
 
 identity::installation::delete() {
+    identity::receipt::load "$1" || return 1
+    if [[ "${2:-0}" == 1 ]] && ! identity::session::proof::check 1; then
+        # A rollback after creating the home may have launched worker helpers.
+        # Complete owned records permit a scoped teardown; incomplete or changed
+        # records fail closed and leave recovery receipts intact.
+        identity::session::stop "$1" || return 1
+    fi
     # Bind the directory to current account GUIDs before touching home contents,
     # then recheck records immediately before deleting the numeric identities.
     identity::account::ownership::check "$1" "${2:-0}" &&
