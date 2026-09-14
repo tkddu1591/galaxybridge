@@ -28,6 +28,12 @@ class ReleaseOutput(unittest.TestCase):
                 (source / name).write_text('Packaging test fixture\n')
             (source / 'docs').mkdir()
             (source / 'docs/architecture.md').write_text('Offline documentation fixture\n')
+            (source / 'fuzz').mkdir()
+            for report in ('REPORT.md', 'PACKED-AGGREGATION.md'):
+                (source / 'fuzz' / report).write_text('Reviewed parser evidence\n')
+            (source / 'fuzz/private.log').write_text('Must not be distributed\n')
+            (source / 'fuzz/corpus').mkdir()
+            (source / 'fuzz/corpus/input').write_bytes(b'private generated input')
             # A stale fixed-target artifact must never be selected.
             stale = source / 'target/aarch64-apple-darwin/release/galaxybridge'
             stale.parent.mkdir(parents=True)
@@ -82,6 +88,13 @@ else:
                 self.assertIn(f'{hashlib.sha256(packaged).hexdigest()}  bin/galaxybridge', manifest)
                 self.assertIn('  README.ko.md\n', manifest)
                 self.assertIn('  docs/architecture.md\n', manifest)
+                self.assertIn('  fuzz/REPORT.md\n', manifest)
+                self.assertIn('  fuzz/PACKED-AGGREGATION.md\n', manifest)
+                fuzz_entries = [member.name for member in bundle.getmembers()
+                                if '/fuzz/' in member.name and member.isfile()]
+                self.assertEqual(len(fuzz_entries), 2)
+                self.assertFalse(any('private.log' in name or '/corpus/' in name
+                                     for name in bundle.getnames()))
                 self.assertIn('  libexec/identity.sh\n', manifest)
                 self.assertIn('  libexec/USBWorker.app/Contents/MacOS/galaxybridge-usb\n', manifest)
                 self.assertIn('  libexec/USBWorker.app/Contents/_CodeSignature/CodeResources\n', manifest)

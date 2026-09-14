@@ -96,6 +96,14 @@ for path in source.rglob('*'):
         raise SystemExit(f'Refusing a symlink in release documentation: {path.relative_to(source)}')
 shutil.copytree(source, sys.argv[2])
 PY
+# Keep the linked security evidence readable in the offline bundle. Copy only
+# the reviewed reports, never fuzz logs, generated inputs or build artifacts.
+[[ -d fuzz && ! -L fuzz ]] || { printf 'Missing fuzz report directory\n' >&2; exit 1; }
+mkdir "$bundle/fuzz"
+for report in REPORT.md PACKED-AGGREGATION.md; do
+    [[ -f "fuzz/$report" && ! -L "fuzz/$report" ]] || { printf 'Missing or symlinked fuzz report: %s\n' "$report" >&2; exit 1; }
+    cp "fuzz/$report" "$bundle/fuzz/$report"
+done
 chmod 755 "$bundle/bin/galaxybridge" "$bundle/install.sh" "$bundle/uninstall.sh"
 /usr/bin/codesign --verify --strict "$bundle/bin/galaxybridge"
 /usr/bin/codesign --display --entitlements :- "$bundle/bin/galaxybridge" > "$staging/supervisor-entitlements.plist" 2>/dev/null

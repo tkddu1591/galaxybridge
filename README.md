@@ -22,7 +22,7 @@ When USB disconnects, the owned DHCP/DNS service and interfaces are removed befo
 
 ## Install once
 
-> **0.2.0 is still in validation; public installation is not available yet.** The command below is the prepared installation entry point. It stops without administrator authentication if the verified release has not been published. The current physical test reaches DHCP but still needs stable-transfer and unplug-recovery verification with the corrected worker.
+> **0.2.0 release preparation is in progress; public installation is not available yet.** Physical transfer, reconnect and automatic Wi-Fi recovery tests have passed. The final normal-service check and release publication are being completed. The command stops without administrator authentication if the verified release has not been published.
 
 Copy this **one command** into Terminal on an Apple Silicon Mac:
 
@@ -106,12 +106,14 @@ No SIP changes, Reduced Security mode, USB debugging, packet-content logging, te
 | Phone protocol | Manufacturer-neutral RNDIS selection with strict configuration and endpoint validation |
 | NCM/ECM | Separate USB networking protocols; GalaxyBridge does not claim these interfaces. Check macOS Network settings for a native USB network service |
 | Physical test device | M3 Pro / macOS 26.5.1 / Galaxy S25 Ultra |
-| USB/RNDIS initialization | v0.1.0 baseline passed; v0.2.0 sandboxed hardware validation pending |
-| End-to-end independent-driver internet | v0.1.0 baseline: DHCP, preferred IPv4 route and HTTPS passed; new sandboxed candidate requires a separate physical check |
-| Automatic Mac-side connection | v0.1.0 baseline passed; dedicated-account/App Sandbox launch validation pending |
-| USB unplug with Wi-Fi left enabled | v0.1.0 baseline: about 0.79 s to the Wi-Fi route and 1.09 s to fresh HTTPS without toggling Wi-Fi; v0.2.0 requires retesting |
+| USB/RNDIS initialization | v0.2.0 passed under the dedicated account and App Sandbox |
+| End-to-end independent-driver internet | v0.2.0: two 180-second sessions, 36/36 fresh USB-bound HTTPS requests, plus 8 MiB download and 2 MiB upload passed |
+| Automatic Mac-side connection | v0.2.0 automatic connection and physical reconnect passed |
+| USB unplug with Wi-Fi left enabled | v0.2.0: two trials; Wi-Fi route in 0.38–0.60 s and fresh HTTPS in 0.72–0.90 s after removal detection, with no Wi-Fi toggle |
 | Other M-series / Android combinations | Not physically verified; please report exact model/OS/protocol |
 | Reboot, sleep/wake, Wi-Fi disabled | Separate validation required |
+
+See [the physical validation report](docs/validation-0.2.0.md) for timing methods, fingerprints and test limits.
 
 The private macOS `feth` interface is an explicit compatibility risk. If relevant kernel settings differ from the expected defaults, GalaxyBridge refuses to silently change global settings.
 

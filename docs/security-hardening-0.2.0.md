@@ -42,7 +42,7 @@ A follow-up packed Android aggregation correction passed 6,868,703 additional
 ASan/libFuzzer executions in 181 seconds, with no report or assertion failure.
 It removes only the aggregate-start eight-byte restriction while retaining
 message and payload bounds. See [the compatibility report](../fuzz/PACKED-AGGREGATION.md)
-for the exact revised source hash, test inputs and remaining physical-test gate.
+for the exact revised source hash and test inputs. Physical outcomes are recorded in [the live validation report](validation-0.2.0.md).
 
 ## App Sandbox evidence
 
@@ -71,8 +71,9 @@ could not be recovered after dropping privileges.
 The first system-launched attempt failed because UID dropping did not switch the
 inherited root Mach bootstrap context: secinitd reported an euid/uid mismatch.
 Matching the bootstrap context to the dedicated account fixed the probe. The automatic service now reaches real phone control and bulk traffic under this
-account. Physical testing then exposed an aggregate-packet compatibility failure
-after DHCP; stable transfer and unplug recovery remain separate release gates.
+account. Physical testing exposed an aggregate-packet compatibility failure
+after DHCP; the corrected parser subsequently passed sustained USB transfers,
+physical reconnect and two automatic Wi-Fi recovery trials.
 
 ## Release validation
 
@@ -82,7 +83,7 @@ not cover unknown defects, operating-system issues or all build-tool risks.
 
 Integrated Rust tests: 78 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 32 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
 
-The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. Automatic-service startup and DHCP have been observed, but the USB worker repeatedly exits during packet parsing. A packed Android RNDIS aggregation compatibility correction is under validation; stable USB transfer and Wi-Fi recovery remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
+The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. The corrected packed-aggregate worker passed two 180-second physical sessions, 36 fresh USB-bound HTTPS requests, an 8 MiB download, a 2 MiB upload, and two USB-unplug/Wi-Fi-recovery trials. The corrected scoped domain teardown also passed a complete real account/home removal and fresh automatic installation. These are direct 0.2.0 observations; see [the physical report](validation-0.2.0.md) for methods and limitations.
 
 The public setup bootstrap passed nine non-privileged fixture tests covering verified automatic/manual installation, corrupt and partial downloads, failed Apple-tool/install steps, cleanup, checked README download execution, and the actual inherited kernel file-size/core limits. No root installation or real phone traffic is exercised by these bootstrap fixtures.
 
