@@ -258,6 +258,11 @@ impl Record {
     fn parse(text: &str, separator: char) -> Result<BTreeMap<&str, &str>> {
         let mut fields = BTreeMap::new();
         for line in text.lines() {
+            let line = if separator == ':' && line.starts_with("dsAttrTypeNative:IsHidden:") {
+                &line["dsAttrTypeNative:".len()..]
+            } else {
+                line
+            };
             let (key, value) = line
                 .split_once(separator)
                 .ok_or("malformed worker identity record")?;

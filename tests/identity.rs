@@ -39,10 +39,15 @@ fn identity_receipt_cannot_select_root_nobody_or_a_human_account() {
 fn replaced_reenabled_or_shared_directory_accounts_are_rejected() {
     let account = Account::parse(RECEIPT).unwrap();
     let user = format!(
-        "UniqueID: 60000\nPrimaryGroupID: 60000\nGeneratedUID: 11111111-1111-4111-8111-111111111111\nAuthenticationAuthority: ;DisabledUser;\nUserShell: /usr/bin/false\nNFSHomeDirectory: {HOME}\nIsHidden: 1\nPassword: *\n"
+        "UniqueID: 60000\nPrimaryGroupID: 60000\nGeneratedUID: 11111111-1111-4111-8111-111111111111\nAuthenticationAuthority: ;DisabledUser;\nUserShell: /usr/bin/false\nNFSHomeDirectory: {HOME}\ndsAttrTypeNative:IsHidden: 1\nPassword: *\n"
     );
     let group = "PrimaryGroupID: 60000\nGeneratedUID: 22222222-2222-4222-8222-222222222222\nGroupMembership: _galaxybridge\nGroupMembers: 11111111-1111-4111-8111-111111111111\nPassword: *\n";
     account.validate(&user, group).unwrap();
+    assert!(
+        account
+            .validate(&format!("{user}IsHidden: 1\n"), group)
+            .is_err()
+    );
     for (from, to) in [
         ("UniqueID: 60000", "UniqueID: 60001"),
         ("PrimaryGroupID: 60000", "PrimaryGroupID: 0"),

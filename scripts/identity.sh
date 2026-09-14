@@ -31,6 +31,9 @@ identity::record::exists() {
 identity::record::attribute::get() {
     local record=$1 attribute=$2 value
     value=$(identity::command::run /usr/bin/dscl /Local/Default -read "$record" "$attribute" 2>/dev/null) || return 1
+    if [[ "$attribute" == IsHidden && "$value" == "dsAttrTypeNative:IsHidden: "* ]]; then
+        value=${value#dsAttrTypeNative:}
+    fi
     [[ "$value" == "$attribute: "* && "$value" != *$'\n'* ]] || return 1
     printf '%s' "${value#*: }"
 }

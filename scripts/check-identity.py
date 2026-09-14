@@ -45,7 +45,8 @@ if tool == 'dscl':
     elif action == '-read':
         if record not in records or args[3] not in records[record]:
             sys.exit(1)
-        print(args[3] + ': ' + records[record][args[3]])
+        attribute = ('dsAttrTypeNative:' if args[3] == 'IsHidden' else '') + args[3]
+        print(attribute + ': ' + records[record][args[3]])
     elif action == '-create':
         attribute, value = args[3:]
         if state.get('fail_attribute') == attribute and record.startswith('/Users/'):
