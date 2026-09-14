@@ -107,6 +107,7 @@ done
 if /usr/bin/pgrep -x galaxybridge >/dev/null; then
     uninstaller::error 'A GalaxyBridge process remains. Stop manual sessions (Ctrl+C), then run the uninstaller again.'
 fi
+identity::session::stop "$destination/IDENTITY"
 identity::installation::delete "$destination/IDENTITY"
 if [[ -L "$link" ]] && [[ $(/usr/bin/readlink "$link") == "$destination/galaxybridge" ]]; then
     # Never unlink through a user-controlled parent.

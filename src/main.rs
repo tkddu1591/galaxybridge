@@ -37,6 +37,8 @@ fn entry() -> Result<()> {
             return Err("USB inspection requires the installed macOS sandboxed worker".into());
         }
         Mode::Connect | Mode::Daemon => {
+            #[cfg(target_os = "macos")]
+            galaxybridge::macos::context::Context::enter(mode, &filter)?;
             let stop = Arc::new(AtomicBool::new(false));
             for signal in [
                 signal_hook::consts::SIGINT,

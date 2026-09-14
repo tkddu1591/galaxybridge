@@ -168,13 +168,64 @@ identity::account::check() {
 
 identity::process::check() {
     local status
-    if identity::command::run /usr/bin/pgrep -u "$identity_uid" >/dev/null; then
+    if identity::process::state::get; then
         identity::error 'Worker identity still has running processes; refusing to remove its account'
         return 1
     else
         status=$?
     fi
     (( status == 1 )) || { identity::error 'Unable to inspect worker processes'; return 1; }
+}
+
+identity::process::state::get() {
+    local selection status
+    # Match either real or effective UID. A process retaining either identity
+    # must be gone before its numeric account can be removed or reused.
+    for selection in -u -U; do
+        if identity::command::run /usr/bin/pgrep "$selection" "$identity_uid" >/dev/null; then
+            return 0
+        else
+            status=$?
+        fi
+        (( status == 1 )) || return 2
+    done
+    return 1
+}
+
+identity::session::stop() {
+    local receipt=$1 status deadline
+    identity::receipt::load "$receipt" || return 1
+    if identity::process::state::get; then :; else
+        status=$?
+        (( status == 1 )) && return 0
+        identity::error 'Cannot inspect worker processes before session shutdown'
+        return 1
+    fi
+    # App Sandbox starts macOS XPC helpers under the dedicated UID. Ask launchd
+    # to remove only that UID's user domain, after proving the current account
+    # still belongs exclusively to this installation. Never target gui/<uid>,
+    # the invoking user's domain, or individual PIDs (which can be recycled).
+    identity::account::check "$receipt" || return 1
+    identity::command::run /bin/launchctl bootout "user/$identity_uid" || {
+        identity::error 'Could not stop the dedicated worker user domain; account and home are retained'
+        return 1
+    }
+    deadline=$((SECONDS + 20))
+    while (( SECONDS < deadline )); do
+        if identity::process::state::get; then :; else
+            status=$?
+            if (( status == 1 )); then
+                identity::account::check "$receipt" || return 1
+                identity::process::check
+                return
+            fi
+            identity::error 'Cannot verify worker-session quiescence; account and home are retained'
+            return 1
+        fi
+        identity::command::run /bin/sleep 1 || return 1
+    done
+    identity::error 'Worker processes remain after user-domain shutdown; account and home are retained'
+    return 1
 }
 
 identity::account::ownership::check() {

@@ -71,7 +71,18 @@ elif tool == 'id':
     except KeyError:
         sys.exit(1)
 elif tool == 'pgrep':
-    sys.exit(0 if state.get('process_running') else 1)
+    if state.get('process_query_error'):
+        sys.exit(2)
+    running = state.get('process_running') or (args[0] == '-U' and state.get('real_uid_process'))
+    sys.exit(0 if running else 1)
+elif tool == 'launchctl':
+    assert args == ['bootout', 'user/60000'], args
+    if state.get('bootout_error'):
+        sys.exit(5)
+    if not state.get('bootout_noop'):
+        state['process_running'] = False
+        state['real_uid_process'] = False
+        save()
 elif tool == 'mount':
     print(state.get('mount_output', ''))
 else:
@@ -121,7 +132,7 @@ class IdentityLifecycle(unittest.TestCase):
             script = script.replace('/usr/bin/stat', shlex.quote(str(stat)))
         # Override the one external-command boundary after loading functions.
         # Even an unintended command sent by the module fails inside the mock.
-        script += '\nidentity::command::run() { ' + shlex.quote(os.sys.executable) + ' ' + shlex.quote(str(self.mock)) + ' ' + shlex.quote(str(self.state)) + ' "$@"; }\n'
+        script += '\nidentity::command::run() { if [[ "$1" == /bin/sleep ]]; then SECONDS=$((SECONDS + 21)); return 0; fi; ' + shlex.quote(os.sys.executable) + ' ' + shlex.quote(str(self.mock)) + ' ' + shlex.quote(str(self.state)) + ' "$@"; }\n'
         script += commands
         return subprocess.run(['/bin/bash', '-euo', 'pipefail', '-c', script, 'identity-test', str(self.receipt), *map(str, extra)],
                               capture_output=True, text=True, timeout=15, check=False)
@@ -215,6 +226,65 @@ class IdentityLifecycle(unittest.TestCase):
         result = self.run_module('identity::account::delete "$1"')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.records(), before)
+
+    def test_sidecar_shutdown_targets_only_owned_user_domain(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        self.update(process_running=True)
+        before = self.records()
+        result = self.run_module('identity::session::stop "$1"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertFalse(state['process_running'])
+        self.assertEqual(self.records(), before, 'Stopping the domain must not remove account records')
+        actions = [call for call in state['calls'] if call[0] == 'launchctl']
+        self.assertEqual(actions, [['launchctl', 'bootout', 'user/60000']])
+
+    def test_mismatched_guid_prevents_user_domain_action(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        records = self.records()
+        records['/Users/_galaxybridge']['GeneratedUID'] = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+        self.update(records=records, process_running=True)
+        result = self.run_module('identity::session::stop "$1"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] == 'launchctl' for call in json.loads(self.state.read_text())['calls']))
+        self.assertEqual(self.records(), records)
+
+    def test_numeric_alias_prevents_user_domain_action(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        records = self.records()
+        records['/Users/another-account'] = {'UniqueID': '60000'}
+        self.update(records=records, process_running=True)
+        result = self.run_module('identity::session::stop "$1"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] == 'launchctl' for call in json.loads(self.state.read_text())['calls']))
+
+    def test_failed_or_noop_bootout_retains_identity_and_receipt(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        before = self.records()
+        for controls in ({'bootout_error': True, 'bootout_noop': False},
+                         {'bootout_error': False, 'bootout_noop': True}):
+            with self.subTest(controls=controls):
+                self.update(process_running=True, **controls)
+                result = self.run_module('identity::session::stop "$1" && identity::installation::delete "$1"')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.records(), before)
+                self.assertTrue(self.receipt.exists())
+
+    def test_process_query_error_blocks_domain_action(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        self.update(process_query_error=True)
+        result = self.run_module('identity::session::stop "$1"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] == 'launchctl' for call in json.loads(self.state.read_text())['calls']))
+
+    def test_real_uid_only_process_is_not_mistaken_for_quiescence(self):
+        self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)
+        self.update(real_uid_process=True)
+        result = self.run_module('identity::receipt::load "$1"; identity::process::check')
+        self.assertNotEqual(result.returncode, 0)
+        result = self.run_module('identity::session::stop "$1"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads(self.state.read_text())['real_uid_process'])
 
     def test_complete_removal_and_retry_after_partial_deletion(self):
         self.assertEqual(self.run_module('identity::account::create "$1"').returncode, 0)

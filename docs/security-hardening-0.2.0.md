@@ -23,6 +23,8 @@ inputs or writable paths may be controlled by another local user.
 | Unsupported control metadata and ambiguous message boundaries expanded parser acceptance | Strict message/status/notification/offset/alignment validation | Deterministic protocol regressions and seeded ASan fuzzing |
 | The root bridge accepted unrelated Ethernet types | Enforce IPv4/ARP only in both directions | Root frame-policy tests; no privileged DHCP parser added |
 
+Live installation also established that `dscl` returns the hidden-user field as `dsAttrTypeNative:IsHidden`; both installer and runtime identity checks now parse that precise field while still rejecting duplicate aliases.
+
 A live installation caught an invalid `install -f 0` option that component-level metadata tests had missed. The installer now supplies an empty symbolic flag list; a new regression executes the complete real copy command (with non-root ownership only substituted for CI), verifying flags, ACLs and retained quarantine.
 
 Additional cleanup tests reject stale/missing account identities, mounted home roots, symlink/hardlink escapes and partial deletion. macOS `find` may return success after an unlink failure, so account removal requires the home to be absent; directory-service deletions also have absence postconditions. Release archives omit builder xattrs, ACLs, flags and local owner names.
@@ -50,8 +52,20 @@ on macOS 26.5.1 / arm64 under an ordinary logged-in account:
   same denials. No custom designated requirement or weakened policy was used.
 
 This establishes actual enforcement in that tested context, not merely the
-presence of entitlement strings. Dedicated service-account/system-launch and real
-phone control/bulk transfer checks are separate gates before release.
+presence of entitlement strings. On 2026-09-14 the installed dedicated account (UID/GID 60000) was tested in its
+own Mach bootstrap context using `launchctl asuser`. The same production native
+credential/descriptor setup was used for both control and sandbox runs. The
+control could read a benign world-readable fixture and connect to a live localhost
+listener; the sandbox received `EPERM` for both. Both exchanged FD 3 messages and
+enumerated the same five USB devices. Actual real/effective UID/GID, supplementary
+groups, no unrelated inherited descriptors, new session, and CORE=0/NOFILE=256/
+NPROC=16 were checked. The installed native test also verified that root UID/GID
+could not be recovered after dropping privileges.
+
+The first system-launched attempt failed because UID dropping did not switch the
+inherited root Mach bootstrap context: secinitd reported an euid/uid mismatch.
+Matching the bootstrap context to the dedicated account fixed the probe. Automatic
+service integration and real phone control/bulk remain separate release gates.
 
 ## Release validation
 
@@ -61,7 +75,7 @@ not cover unknown defects, operating-system issues or all build-tool risks.
 
 Integrated Rust tests: 72 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 18 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
 
-The root-only real/effective/saved credential test, dedicated-account sandbox runtime probe and physical USB/Wi-Fi recovery checks remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
+The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. Automatic-service bootstrap integration and physical USB/Wi-Fi recovery checks remain release gates. A prior 0.1.0 connectivity test is not evidence for the new sandboxed worker.
 
 ## Remaining risk
 
