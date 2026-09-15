@@ -77,13 +77,13 @@ physical reconnect and two automatic Wi-Fi recovery trials.
 
 ## Release validation
 
-The dependency advisory scan performed on 2026-09-14 reported no known RustSec
+The dependency advisory scan performed on 2026-09-15 reported no known RustSec
 vulnerabilities or warnings in the runtime lockfile. A clean advisory scan does
 not cover unknown defects, operating-system issues or all build-tool risks.
 
 Integrated Rust tests: 78 passed, with two explicit platform/privileged integration tests excluded from the default suite. Installer tests: 29 passed; account/home lifecycle tests: 32 passed; signed-worker packaging regression: passed. Formatting and Clippy warnings-as-errors passed.
 
-The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. The corrected packed-aggregate worker passed two 180-second physical sessions, 36 fresh USB-bound HTTPS requests, an 8 MiB download, a 2 MiB upload, and two USB-unplug/Wi-Fi-recovery trials. The corrected scoped domain teardown also passed a complete real account/home removal and fresh automatic installation. These are direct 0.2.0 observations; see [the physical report](validation-0.2.0.md) for methods and limitations.
+The installed root-only real/effective/saved credential test and dedicated-account sandbox runtime probe passed on 2026-09-14. The corrected packed-aggregate worker passed two 180-second physical sessions, 36 fresh USB-bound HTTPS requests, an 8 MiB download, a 2 MiB upload, and two USB-unplug/Wi-Fi-recovery trials. The corrected scoped domain teardown also passed a complete real account/home removal and fresh automatic installation. A further 60-second reconnect check under the normal service configuration passed all six HTTPS requests on 2026-09-15. These are direct 0.2.0 observations; see [the physical report](validation-0.2.0.md) for methods and limitations.
 
 The public setup bootstrap passed nine non-privileged fixture tests covering verified automatic/manual installation, corrupt and partial downloads, failed Apple-tool/install steps, cleanup, checked README download execution, and the actual inherited kernel file-size/core limits. No root installation or real phone traffic is exercised by these bootstrap fixtures.
 

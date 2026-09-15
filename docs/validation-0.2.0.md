@@ -1,6 +1,6 @@
 # 0.2.0 physical and security validation
 
-Validation date: 2026-09-14. Host: Apple M3 Pro, macOS 26.5.1. Phone: Galaxy S25 Ultra exposing RNDIS. Wi-Fi remained enabled during USB testing. This is development validation on one hardware/OS combination, not certification or evidence for every Android device.
+Validation dates: 2026-09-14 and 2026-09-15. Host: Apple M3 Pro, macOS 26.5.1. Phone: Galaxy S25 Ultra exposing RNDIS. Wi-Fi remained enabled during USB testing. This is development validation on one hardware/OS combination, not certification or evidence for every Android device.
 
 ## Installation and isolation
 
@@ -22,7 +22,7 @@ After reconnect, a bounded 8 MiB download and a 2 MiB upload to [Cloudflare’s 
 
 After reconnect, a second 180-second observation completed all 18 fresh HTTPS requests with no process restart or new driver error. A second physical unplug recovered the Wi-Fi route in 0.380 seconds and fresh HTTPS in 0.717 seconds; both virtual interfaces were removed and Wi-Fi remained on. This second measurement finished at 18:07:56 KST, before the diagnostic service configuration was cleaned up at 18:09:11, so the service restart did not cause the measured recovery.
 
-The temporary log setting was removed, and the ordinary automatic service restarted successfully. Its final phone reconnect check is still in progress.
+The temporary log setting was removed, and the ordinary automatic service restarted successfully. On 2026-09-15 the phone reconnected under that normal configuration. A final 60-second observation completed all six fresh USB-bound HTTPS requests, with the same supervisor and worker processes and the dedicated UID/GID throughout. This brings the three observation windows to 42 successful requests. The signature and the four runtime fingerprints below were rechecked after this final test.
 
 ## Runtime fingerprints
 

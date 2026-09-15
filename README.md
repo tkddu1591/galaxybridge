@@ -22,8 +22,6 @@ When USB disconnects, the owned DHCP/DNS service and interfaces are removed befo
 
 ## Install once
 
-> **0.2.0 release preparation is in progress; public installation is not available yet.** Physical transfer, reconnect and automatic Wi-Fi recovery tests have passed. The final normal-service check and release publication are being completed. The command stops without administrator authentication if the verified release has not been published.
-
 Copy this **one command** into Terminal on an Apple Silicon Mac:
 
 ```sh
