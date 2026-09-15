@@ -5,7 +5,7 @@ export PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C
 unset BASH_ENV ENV CDPATH PERL5OPT PERL5LIB PERLLIB PERL5DB DEVELOPER_DIR SDKROOT TOOLCHAINS
 umask 077
 readonly setup_version=0.2.0
-readonly setup_sha256=685823a742abed0ddc56f51bc3cbddb49f316ca82584e6d22419ec19ba0657c6
+readonly setup_sha256=5bfc3a258c5c6ce08fce5b6f978eb710334de55386de86a93e74b368efc21cd0
 readonly setup_repository=https://github.com/tkddu1591/galaxybridge
 setup_directory=
 
