@@ -9,7 +9,7 @@ license = "MIT"
 repository = "https://github.com/tkddu1591/galaxybridge"
 
 [dependencies]
-nusb = "=0.2.7"
+nusb = "=0.2.8"
 libc = "0.2"
 signal-hook = "=0.4.4"
 
